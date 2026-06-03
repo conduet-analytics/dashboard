@@ -223,7 +223,10 @@ footer { text-align: center; font-size: 10px; color: var(--muted); margin-top: 2
     <span style="font-weight:700;font-size:13px;color:var(--purple);">📅 Select Period</span>
     <select id="sel-year" style="border:1.5px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;font-weight:600;cursor:pointer;outline:none;"></select>
     <select id="sel-month" style="border:1.5px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;font-weight:600;cursor:pointer;outline:none;"></select>
-    <span style="font-size:11px;color:var(--muted);">Auto-loads on selection · shows ±2 months context</span>
+    <button id="btn-load" style="background:var(--purple);color:#fff;border:none;border-radius:8px;padding:7px 18px;font-size:13px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:6px;">
+      <span id="btn-load-icon">🔄</span> Load Data
+    </button>
+    <span id="inline-loading" style="font-size:11px;color:var(--purple);display:none;">⏳ Loading...</span>
     <span style="margin-left:auto;font-size:11px;color:var(--muted);">🕐 Last refreshed: <span id="last-refresh-time">—</span></span>
   </div>
 
@@ -396,15 +399,16 @@ function initDateSelectors() {
   }
   populateMonths(false);
 
-  // Attach events once using JS (not inline onchange)
+  // Attach events once using JS
   if (!_listenersAttached) {
     yearSel.addEventListener('change', () => {
       populateMonths(false);
-      loadData();
     });
     monthSel.addEventListener('change', () => {
       loadData();
     });
+    const btn = document.getElementById('btn-load');
+    if (btn) btn.addEventListener('click', () => loadData());
     _listenersAttached = true;
   }
 }
@@ -438,12 +442,24 @@ function onSignedIn(account) {
 })();
 
 // ── DATA LOADING ──────────────────────────────────────
+let _firstLoad = true;
 function setLoading(show, text = '', pct = 0) {
-  document.getElementById('loading-screen').style.display = show ? 'flex' : 'none';
-  document.getElementById('dashboard').style.display = show ? 'none' : 'block';
-  if (show) {
-    document.getElementById('loading-text').textContent = text;
-    document.getElementById('progress-bar').style.width = pct + '%';
+  if (_firstLoad) {
+    // First load — use full screen spinner
+    document.getElementById('loading-screen').style.display = show ? 'flex' : 'none';
+    document.getElementById('dashboard').style.display = show ? 'none' : 'block';
+    if (show) {
+      document.getElementById('loading-text').textContent = text;
+      document.getElementById('progress-bar').style.width = pct + '%';
+    }
+    if (!show) _firstLoad = false;
+  } else {
+    // Subsequent loads — inline indicator only
+    const il = document.getElementById('inline-loading');
+    const btn = document.getElementById('btn-load');
+    if (il) il.style.display = show ? 'inline' : 'none';
+    if (il && show) il.textContent = `⏳ ${text}`;
+    if (btn) btn.disabled = show;
   }
 }
 
