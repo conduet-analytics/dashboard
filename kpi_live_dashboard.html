@@ -439,8 +439,8 @@ async function loadData() {
     const dimRes = await sessionGet(`${base}/usedRange(valuesOnly=true)?$select=rowCount`);
     const totalRows = dimRes.rowCount;
 
-    // Get headers
-    const hdrRes = await sessionGet(`${base}/range(address='A1:AD1')?$select=values`);
+    // Get headers — read wider range to find all columns
+    const hdrRes = await sessionGet(`${base}/range(address='A1:AZ1')?$select=values`);
     const headers = hdrRes.values[0];
     const calMonthIdx = headers.indexOf('Cal Month');
     const yearIdx     = headers.indexOf('Year');
@@ -461,7 +461,7 @@ async function loadData() {
       const endRow   = Math.min(startRow + BATCH - 1, totalRows);
       const pct = 30 + Math.round((b / scanBatches) * 55);
       setLoading(true, `Loading data... batch ${b+1} of ${scanBatches}`, pct);
-      const batchRes = await sessionGet(`${base}/range(address='A${startRow}:AD${endRow}')?$select=values`);
+      const batchRes = await sessionGet(`${base}/range(address='A${startRow}:AZ${endRow}')?$select=values`);
       const filtered = batchRes.values.filter(row => {
         const rowMonth = row[calMonthIdx];
         const rowYear  = parseInt(row[yearIdx]);
@@ -519,52 +519,95 @@ async function loadData() {
 function computeKPIs(rows) {
   const headers = rows[0];
   const ci = name => headers.indexOf(name);
+
+  console.log('All headers:', headers);
+
   const C = {
-    loc:     ci('Location'),
-    agent:   ci('Agent Name'),
-    weekEnd: ci('Week End'),
-    month:   ci('Cal Month'),
-    year:    ci('Year'),
-    empStat: ci('Emp Status'),
-    msgHndl: ci('Messaging Handled'),
-    msgAHT:  ci('Messaging AHT (sec)'),
-    msgSLA:  ci('Messaging within SLA'),
-    csatS:   ci('Overall CSAT Score'),
-    csatC:   ci('Overall Survey Count without blank'),
-    mcsatS:  ci('Messaging CSAT Score'),
-    mcsatC:  ci('Messaging Survey Count without blank'),
-    ecsatS:  ci('Email CSAT Score'),
-    ecsatC:  ci('Email Survey Count without blank'),
-    qaScore: ci('Total QA Score'),
-    qaRev:   ci('Total QA Reviews'),
+    loc:        ci('Location'),
+    agent:      ci('Agent Name'),
+    weekEnd:    ci('Week End'),
+    month:      ci('Cal Month'),
+    year:       ci('Year'),
+    empStat:    ci('Emp Status'),
+    // Messaging
+    msgHndl:    ci('Messaging Handled'),
+    msgAHT:     ci('Messaging AHT (sec)'),
+    msgSLA:     ci('Messaging within SLA'),
+    // Email
+    emailHndl:  ci('Email Handled'),
+    emailAHT:   ci('Email AHT (sec)'),
+    emailCont:  ci('Email Contacts w/ Handle Time'),
+    emailSLA:   ci('Email SLA < 12 hrs'),
+    // CSAT
+    csatS:      ci('Overall CSAT Score'),
+    csatC:      ci('Overall Survey Count without blank'),
+    mcsatS:     ci('Messaging CSAT Score'),
+    mcsatC:     ci('Messaging Survey Count without blank'),
+    ecsatS:     ci('Email CSAT Score'),
+    ecsatC:     ci('Email Survey Count without blank'),
+    // QA
+    qaScore:    ci('Total QA Score'),
+    qaRev:      ci('Total QA Reviews'),
+    // Attendance / CPH
+    loginHrs:   ci('Login Hours'),
+    schedHrs:   ci('Scheduled Hours'),
+    prodHrs:    ci('Productive Hours'),
+    present:    ci('# of Present'),
+    // Adherence
+    rostered:   ci('Rostered less Leave'),
+    ooa:        ci('OOA'),
   };
+
+  console.log('Column indices:', C);
+  console.log('Sample row location:', rows[1]?.[C.loc], '| empStat:', rows[1]?.[C.empStat], '| weekEnd:', rows[1]?.[C.weekEnd]);
 
   const MONTH_ORDER = ['January','February','March','April','May','June','July','August','September','October','November','December'];
   const n = v => Number(v) || 0;
 
   function agg(rows) {
     if (!rows.length) return null;
-    const hc      = new Set(rows.map(r => r[C.agent])).size;
-    const msg     = rows.reduce((s,r) => s + n(r[C.msgHndl]), 0);
-    const ahtSec  = rows.reduce((s,r) => s + n(r[C.msgAHT]),  0);
-    const slaC    = rows.reduce((s,r) => s + n(r[C.msgSLA]),  0);
-    const csN     = rows.reduce((s,r) => s + n(r[C.csatS])  * n(r[C.csatC]),  0);
-    const csD     = rows.reduce((s,r) => s + n(r[C.csatC]),  0);
-    const msN     = rows.reduce((s,r) => s + n(r[C.mcsatS]) * n(r[C.mcsatC]), 0);
-    const msD     = rows.reduce((s,r) => s + n(r[C.mcsatC]), 0);
-    const esN     = rows.reduce((s,r) => s + n(r[C.ecsatS]) * n(r[C.ecsatC]), 0);
-    const esD     = rows.reduce((s,r) => s + n(r[C.ecsatC]), 0);
-    const qaS     = rows.reduce((s,r) => s + n(r[C.qaScore]), 0);
-    const qaR     = rows.reduce((s,r) => s + n(r[C.qaRev]),   0);
+    const hc       = new Set(rows.map(r => r[C.agent])).size;
+    // Messaging
+    const msg      = rows.reduce((s,r) => s + n(r[C.msgHndl]), 0);
+    const ahtSec   = rows.reduce((s,r) => s + n(r[C.msgAHT]),  0);
+    const slaC     = rows.reduce((s,r) => s + n(r[C.msgSLA]),  0);
+    // Email
+    const email    = rows.reduce((s,r) => s + n(r[C.emailHndl]), 0);
+    const eAhtSec  = rows.reduce((s,r) => s + n(r[C.emailAHT]),  0);
+    const eAhtCnt  = rows.reduce((s,r) => s + n(r[C.emailCont]), 0);
+    const eSlaOk   = rows.reduce((s,r) => s + n(r[C.emailSLA]),  0);
+    // CSAT
+    const csN      = rows.reduce((s,r) => s + n(r[C.csatS])  * n(r[C.csatC]),  0);
+    const csD      = rows.reduce((s,r) => s + n(r[C.csatC]),  0);
+    const msN      = rows.reduce((s,r) => s + n(r[C.mcsatS]) * n(r[C.mcsatC]), 0);
+    const msD      = rows.reduce((s,r) => s + n(r[C.mcsatC]), 0);
+    const esN      = rows.reduce((s,r) => s + n(r[C.ecsatS]) * n(r[C.ecsatC]), 0);
+    const esD      = rows.reduce((s,r) => s + n(r[C.ecsatC]), 0);
+    // QA
+    const qaS      = rows.reduce((s,r) => s + n(r[C.qaScore]), 0);
+    const qaR      = rows.reduce((s,r) => s + n(r[C.qaRev]),   0);
+    // Attendance = Login Hours / Scheduled Hours
+    const loginH   = rows.reduce((s,r) => s + n(r[C.loginHrs]),  0);
+    const schedH   = rows.reduce((s,r) => s + n(r[C.schedHrs]),  0);
+    const prodH    = rows.reduce((s,r) => s + n(r[C.prodHrs]),   0);
+    // Adherence = (Rostered less Leave - OOA) / Rostered less Leave
+    const rost     = rows.reduce((s,r) => s + n(r[C.rostered]), 0);
+    const ooa      = rows.reduce((s,r) => s + n(r[C.ooa]),      0);
+
     return {
       hc,
-      csat:       csD ? +(csN/csD).toFixed(2) : null,
-      msg_csat:   msD ? +(msN/msD).toFixed(2) : null,
-      email_csat: esD ? +(esN/esD).toFixed(2) : null,
-      aht:        msg ? +(ahtSec/msg/60).toFixed(2) : null,
-      quality:    qaR ? +((qaS/qaR)/100*100).toFixed(2) : null,
-      msg_sla:    msg ? +(slaC/msg*100).toFixed(2) : null,
-      contacts:   msg,
+      csat:        csD  ? +(csN/csD).toFixed(2)   : null,
+      msg_csat:    msD  ? +(msN/msD).toFixed(2)   : null,
+      email_csat:  esD  ? +(esN/esD).toFixed(2)   : null,
+      aht:         msg  ? +(ahtSec/msg/60).toFixed(2) : null,
+      email_aht:   eAhtCnt ? +(eAhtSec/eAhtCnt/60).toFixed(2) : null,
+      quality:     qaR  ? +((qaS/qaR)/100*100).toFixed(2) : null,
+      msg_sla:     msg  ? +(slaC/msg*100).toFixed(2) : null,
+      email_sla:   email ? +(eSlaOk/email*100).toFixed(2) : null,
+      contacts:    msg + email,
+      cph:         prodH ? +((msg+email)/prodH).toFixed(2) : null,
+      attendance:  schedH ? +(loginH/schedH*100).toFixed(2) : null,
+      adherence:   rost ? +((rost-ooa)/rost*100).toFixed(2) : null,
     };
   }
 
@@ -642,14 +685,14 @@ const METRICS = [
   { key:'msg_csat',   label:'Messaging CSAT',         fmt:f2, hb:true  },
   { key:'email_csat', label:'Email CSAT',             fmt:f2, hb:true  },
   { key:'aht',        label:'AHT Messaging (mins)',   fmt:f2, hb:false },
+  { key:'email_aht',  label:'AHT Email (mins)',       fmt:f2, hb:false },
   { key:'quality',    label:'Quality',                fmt:fp, hb:true  },
+  { key:'cph',        label:'CPH',                   fmt:f2, hb:true  },
   { key:'msg_sla',    label:'Messaging SLA',          fmt:fp, hb:true  },
+  { key:'email_sla',  label:'Email SLA',              fmt:fp, hb:true  },
+  { key:'attendance', label:'Attendance %',           fmt:fp, hb:true  },
+  { key:'adherence',  label:'Adherence %',            fmt:fp, hb:true  },
   { key:'contacts',   label:'Total Contacts Handled', fmt:fn, hb:null  },
-  { key:null, label:'Attendance %',     note:'Needs Login Hours / Scheduled Hours' },
-  { key:null, label:'CPH',              note:'Needs Productive Hours + Email Handled' },
-  { key:null, label:'AHT Email (mins)', note:'Needs Email AHT (sec) / Email Contacts w/ Handle Time' },
-  { key:null, label:'Email SLA',        note:'Needs Email SLA <12hrs column' },
-  { key:null, label:'Adherence %',      note:'Needs Rostered less Leave / OOA columns' },
 ];
 
 function buildTable(data, tblId) {
