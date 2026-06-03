@@ -655,6 +655,10 @@ const METRICS = [
 function buildTable(data, tblId) {
   const labels = Object.keys(data);
   const periods = labels;
+  if (!periods.length) {
+    document.getElementById(tblId).innerHTML = '<tr><td colspan="10" style="padding:20px;color:var(--muted);text-align:center">No data found for selected period.</td></tr>';
+    return;
+  }
   let h = `<thead><tr><th>KPIs</th>${periods.map(l=>`<th>${l}</th>`).join('')}</tr></thead><tbody>`;
 
   // HC section
@@ -712,6 +716,10 @@ function buildTable(data, tblId) {
 
 function renderSnapCards(weekly) {
   const periods = Object.keys(weekly);
+  if (!periods.length) {
+    document.getElementById('snap-cards').innerHTML = '<div style="color:var(--muted);padding:20px">No data found for the selected period. Try a different month.</div>';
+    return;
+  }
   const latest = weekly[periods[periods.length - 1]];
   const prev   = periods.length > 1 ? weekly[periods[periods.length - 2]] : null;
   const pct = (curr, p, hb) => {
