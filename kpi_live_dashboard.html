@@ -1,0 +1,881 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HRD CS · KPI Performance Dashboard</title>
+<script>
+// Load MSAL and Chart.js dynamically and wait for both before initializing
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src; s.onload = resolve; s.onerror = reject;
+    document.head.appendChild(s);
+  });
+}
+window.addEventListener('DOMContentLoaded', async () => {
+  try {
+    await loadScript('https://unpkg.com/@azure/msal-browser@2.38.3/lib/msal-browser.min.js');
+    await loadScript('https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.js');
+    initApp();
+  } catch(e) {
+    document.body.innerHTML = '<div style="padding:40px;font-family:sans-serif;color:red"><h2>Failed to load required libraries.</h2><p>Please check your internet connection and try again.</p><pre>'+e+'</pre></div>';
+  }
+});
+</script>
+<style>
+:root {
+  --purple:#5b2c8d; --purple2:#8e44ad; --purple-lt:#f3eeff;
+  --teal:#0d7f7f; --teal2:#16a085; --teal-lt:#e6f8f8;
+  --green:#1b7f3a; --green-lt:#e8f5ec;
+  --amber:#b45309; --amber-lt:#fef3e2;
+  --red:#c0392b; --red-lt:#fdecea;
+  --blue:#1565c0; --orange:#e07b00;
+  --bg:#f0f2f6; --card:#fff; --border:#e2e6ea;
+  --text:#1a1d23; --muted:#6c757d;
+  color-scheme: light;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); font-size: 13px; }
+
+/* NAV */
+nav {
+  background: linear-gradient(135deg, var(--purple), var(--purple2));
+  color: #fff; padding: 0 24px; height: 56px;
+  display: flex; align-items: center; justify-content: space-between;
+  box-shadow: 0 2px 8px rgba(0,0,0,.2); position: sticky; top: 0; z-index: 100;
+}
+.nav-left { display: flex; align-items: center; gap: 12px; }
+.nav-icon { width: 36px; height: 36px; background: rgba(255,255,255,.18); border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 18px; }
+.nav-title { font-size: 15px; font-weight: 700; }
+.nav-sub { font-size: 10.5px; opacity: .8; }
+.nav-right { display: flex; align-items: center; gap: 12px; font-size: 11.5px; }
+.nav-user { background: rgba(255,255,255,.15); border-radius: 20px; padding: 4px 12px; }
+.btn-signout { background: rgba(255,255,255,.2); border: 1px solid rgba(255,255,255,.3); color: #fff; border-radius: 6px; padding: 5px 12px; font-size: 11px; cursor: pointer; }
+.btn-signout:hover { background: rgba(255,255,255,.3); }
+
+/* LOGIN SCREEN */
+#login-screen {
+  min-height: calc(100vh - 56px); display: flex; align-items: center; justify-content: center;
+}
+.login-card {
+  background: var(--card); border-radius: 16px; padding: 48px 40px; text-align: center;
+  box-shadow: 0 4px 20px rgba(0,0,0,.1); max-width: 400px; width: 90%;
+}
+.login-logo { font-size: 48px; margin-bottom: 16px; }
+.login-title { font-size: 20px; font-weight: 700; margin-bottom: 6px; }
+.login-sub { color: var(--muted); font-size: 13px; margin-bottom: 28px; }
+.btn-login {
+  background: linear-gradient(135deg, var(--purple), var(--purple2));
+  color: #fff; border: none; border-radius: 10px; padding: 13px 32px;
+  font-size: 14px; font-weight: 600; cursor: pointer; width: 100%;
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  transition: opacity .15s;
+}
+.btn-login:hover { opacity: .9; }
+.btn-login svg { flex-shrink: 0; }
+
+/* LOADING */
+#loading-screen {
+  min-height: calc(100vh - 56px); display: none; align-items: center; justify-content: center; flex-direction: column; gap: 16px;
+}
+.spinner {
+  width: 48px; height: 48px; border: 4px solid var(--purple-lt);
+  border-top-color: var(--purple); border-radius: 50%; animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-text { font-size: 13px; color: var(--muted); }
+.progress-bar-wrap { width: 240px; height: 4px; background: var(--border); border-radius: 2px; }
+.progress-bar { height: 100%; background: var(--purple); border-radius: 2px; transition: width .3s; }
+
+/* MAIN DASHBOARD */
+#dashboard { display: none; }
+.main { max-width: 1480px; margin: 0 auto; padding: 18px 18px 40px; }
+
+.sec-label {
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;
+  color: var(--muted); margin: 20px 0 10px; display: flex; align-items: center; gap: 6px;
+}
+.sec-label::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+
+/* CARDS */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(155px, 1fr)); gap: 11px; }
+.card {
+  background: var(--card); border-radius: 11px; padding: 14px 15px;
+  box-shadow: 0 1px 5px rgba(0,0,0,.07); border-top: 3px solid var(--purple);
+}
+.card.t { border-top-color: var(--teal); }
+.card.g { border-top-color: var(--green); }
+.card.o { border-top-color: var(--orange); }
+.card.b { border-top-color: var(--blue); }
+.card.r { border-top-color: var(--red); }
+.card-lbl { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
+.card-val { font-size: 24px; font-weight: 800; line-height: 1.1; margin: 3px 0; }
+.card-sub { font-size: 10px; color: var(--muted); }
+.badge { display: inline-flex; align-items: center; gap: 2px; font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 20px; margin-top: 5px; }
+.b-up { background: var(--green-lt); color: var(--green); }
+.b-dn { background: var(--red-lt); color: var(--red); }
+.b-fl { background: var(--amber-lt); color: var(--amber); }
+
+/* CHARTS */
+.charts { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 14px; }
+.ch-card { background: var(--card); border-radius: 12px; padding: 15px; box-shadow: 0 1px 5px rgba(0,0,0,.07); }
+.ch-title { font-size: 10.5px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 10px; }
+.ch-wrap { position: relative; height: 155px; }
+
+/* TABS */
+.tabs { display: flex; gap: 5px; margin-bottom: 13px; }
+.tab { padding: 6px 18px; border-radius: 22px; border: 1.5px solid var(--border); background: var(--card); font-size: 12px; font-weight: 600; cursor: pointer; color: var(--muted); transition: all .15s; }
+.tab.active { background: var(--purple); color: #fff; border-color: var(--purple); }
+.tab-pane { display: none; } .tab-pane.active { display: block; }
+
+/* LEGEND */
+.legend { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; align-items: center; }
+.leg { display: flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 20px; }
+.leg-c { background: var(--purple-lt); color: var(--purple); }
+.leg-h { background: var(--red-lt); color: var(--red); }
+.leg-t { background: #e8f0fe; color: var(--blue); }
+.leg-n { background: #fff3e0; color: var(--orange); }
+
+/* TABLE CARD */
+.tbl-card { background: var(--card); border-radius: 13px; overflow: hidden; box-shadow: 0 1px 6px rgba(0,0,0,.09); }
+.tbl-hdr { display: flex; align-items: center; gap: 9px; padding: 11px 16px; font-weight: 700; font-size: 12px; color: #fff; }
+.tbl-hdr.purple { background: linear-gradient(135deg, var(--purple), var(--purple2)); }
+.tbl-hdr.teal { background: linear-gradient(135deg, var(--teal), var(--teal2)); }
+
+/* KPI TABLE */
+.kpi-tbl { width: 100%; border-collapse: collapse; }
+.kpi-tbl th { padding: 6px 9px; font-size: 10px; font-weight: 700; text-align: center; border-bottom: 2px solid var(--border); white-space: nowrap; color: var(--muted); background: #fafafa; }
+.kpi-tbl th:first-child { text-align: left; min-width: 150px; }
+.kpi-tbl td { padding: 3.5px 8px; border-bottom: 1px solid #f0f0f0; font-size: 11.5px; text-align: center; white-space: nowrap; }
+.kpi-tbl td:first-child { text-align: left; }
+.r-sec td { background: #f7f7fa; font-weight: 700; font-size: 11px; }
+.r-sec td:first-child { padding-left: 10px; border-left: 3px solid var(--purple); }
+.r-c td { background: var(--purple-lt); font-weight: 700; }
+.r-c td:first-child { padding-left: 10px; color: var(--purple); }
+.r-h td { background: var(--red-lt); font-weight: 700; }
+.r-h td:first-child { padding-left: 10px; color: var(--red); }
+.r-t td:first-child { padding-left: 22px; color: var(--blue); font-size: 11px; }
+.r-n td:first-child { padding-left: 22px; color: var(--orange); font-size: 11px; }
+.r-t td, .r-n td { background: #fafafa; }
+.up { color: var(--green); font-size: 9px; }
+.dn { color: var(--red); font-size: 9px; }
+.fl { color: var(--amber); font-size: 9px; }
+.na { color: #bbb; font-style: italic; font-size: 10.5px; }
+
+/* REFRESH BTN */
+.refresh-btn {
+  background: var(--card); border: 1.5px solid var(--border); border-radius: 8px;
+  padding: 6px 14px; font-size: 11.5px; font-weight: 600; cursor: pointer; color: var(--muted);
+  display: flex; align-items: center; gap: 5px; transition: all .15s;
+}
+.refresh-btn:hover { border-color: var(--purple); color: var(--purple); }
+.last-refresh { font-size: 10.5px; color: var(--muted); }
+
+footer { text-align: center; font-size: 10px; color: var(--muted); margin-top: 22px; padding-bottom: 10px; }
+
+/* Error */
+.error-box { background: var(--red-lt); border: 1px solid #f5c6cb; border-radius: 9px; padding: 12px 16px; font-size: 12px; color: var(--red); margin: 16px; }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="nav-left">
+    <div class="nav-icon">📊</div>
+    <div>
+      <div class="nav-title">HRD CS · KPI Performance Dashboard</div>
+      <div class="nav-sub">Conduet vs Hard Rock · Tenured vs New Hires</div>
+    </div>
+  </div>
+  <div class="nav-right">
+    <span class="nav-user" id="nav-user" style="display:none"></span>
+    <button class="btn-signout" id="btn-signout" style="display:none" onclick="signOut()">Sign Out</button>
+  </div>
+</nav>
+
+<!-- LOGIN -->
+<div id="login-screen">
+  <div class="login-card">
+    <div class="login-logo">📊</div>
+    <div class="login-title">HRD CS KPI Dashboard</div>
+    <div class="login-sub">Sign in with your Microsoft account to access live KPI data from SharePoint.</div>
+    <button class="btn-login" onclick="signIn()">
+      <svg width="20" height="20" viewBox="0 0 21 21" fill="none"><rect x="1" y="1" width="9" height="9" fill="#F25022"/><rect x="11" y="1" width="9" height="9" fill="#7FBA00"/><rect x="1" y="11" width="9" height="9" fill="#00A4EF"/><rect x="11" y="11" width="9" height="9" fill="#FFB900"/></svg>
+      Sign in with Microsoft
+    </button>
+  </div>
+</div>
+
+<!-- LOADING -->
+<div id="loading-screen">
+  <div class="spinner"></div>
+  <div class="loading-text" id="loading-text">Connecting to SharePoint...</div>
+  <div class="progress-bar-wrap"><div class="progress-bar" id="progress-bar" style="width:0%"></div></div>
+</div>
+
+<!-- DASHBOARD -->
+<div id="dashboard">
+<div class="main">
+
+  <!-- DATE RANGE SELECTOR -->
+  <div style="background:#fff;border-radius:12px;padding:14px 18px;box-shadow:0 1px 5px rgba(0,0,0,.07);margin-bottom:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+    <span style="font-weight:700;font-size:13px;color:var(--purple);">📅 Select Period</span>
+    <select id="sel-year" style="border:1.5px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;font-weight:600;cursor:pointer;outline:none;" onchange="populateMonths()"></select>
+    <select id="sel-month" style="border:1.5px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;font-weight:600;cursor:pointer;outline:none;"></select>
+    <button onclick="loadData()" style="background:var(--purple);color:#fff;border:none;border-radius:8px;padding:7px 18px;font-size:13px;font-weight:700;cursor:pointer;">Load Data</button>
+    <span style="font-size:11px;color:var(--muted);">Loads selected month + 2 months before & after</span>
+    <span style="margin-left:auto;font-size:11px;color:var(--muted);">🕐 Last refreshed: <span id="last-refresh-time">—</span></span>
+  </div>
+
+  <div class="sec-label">📅 Latest Week Snapshot</div>
+  <div class="cards" id="snap-cards"></div>
+
+  <div class="sec-label">📈 Monthly Trends</div>
+  <div class="charts">
+    <div class="ch-card"><div class="ch-title">Overall CSAT</div><div class="ch-wrap"><canvas id="c-csat"></canvas></div></div>
+    <div class="ch-card"><div class="ch-title">Messaging CSAT</div><div class="ch-wrap"><canvas id="c-mcsat"></canvas></div></div>
+    <div class="ch-card"><div class="ch-title">Quality (%)</div><div class="ch-wrap"><canvas id="c-qa"></canvas></div></div>
+    <div class="ch-card"><div class="ch-title">Messaging AHT (mins)</div><div class="ch-wrap"><canvas id="c-aht"></canvas></div></div>
+    <div class="ch-card"><div class="ch-title">Messaging SLA (%)</div><div class="ch-wrap"><canvas id="c-sla"></canvas></div></div>
+    <div class="ch-card"><div class="ch-title">Contact Volume</div><div class="ch-wrap"><canvas id="c-vol"></canvas></div></div>
+  </div>
+
+  <div class="sec-label">📋 KPI Summary Tables</div>
+  <div class="legend">
+    <span class="leg leg-c">● Conduet</span>
+    <span class="leg leg-h">● Hard Rock (HRD)</span>
+    <span class="leg leg-t">– Tenured</span>
+    <span class="leg leg-n">– New Hires</span>
+    <span style="font-size:10px;color:var(--muted)">· HRD has no Tenured/New Hire split in source data</span>
+  </div>
+  <div class="tabs">
+    <button class="tab active" onclick="showTab('weekly',this)">📅 Weekly View</button>
+    <button class="tab" onclick="showTab('monthly',this)">📆 Monthly View</button>
+  </div>
+  <div class="tab-pane active" id="pane-weekly">
+    <div class="tbl-card">
+      <div class="tbl-hdr purple">📊 &nbsp;WEEKLY KPI SUMMARY — Conduet &amp; HRD · Tenured vs New Hires</div>
+      <div style="overflow-x:auto"><table class="kpi-tbl" id="tbl-weekly"></table></div>
+    </div>
+  </div>
+  <div class="tab-pane" id="pane-monthly">
+    <div class="tbl-card">
+      <div class="tbl-hdr teal">📊 &nbsp;MONTHLY KPI SUMMARY — Conduet &amp; HRD · Tenured vs New Hires</div>
+      <div style="overflow-x:auto"><table class="kpi-tbl" id="tbl-monthly"></table></div>
+    </div>
+  </div>
+
+</div>
+<footer>HRD CS KPI Dashboard · Live from SharePoint · KPI Performance – HRD vs Conduet.xlsx</footer>
+</div>
+
+<script>
+function initApp() {
+// ── CONFIG ────────────────────────────────────────────
+const CLIENT_ID  = '7dfd41b7-1960-49c6-a701-b021a28550bb';
+const TENANT_ID  = '3acfc3b8-ea64-4ce1-8910-f91e9c67a3fc';
+const DRIVE_ID   = 'b!d-WPImoa-0mrT0yO4zMkGQ4ENzHxU5xEmMMRHEAXItThtQ_sSWUrTK3KCi7xIKJt';
+const ITEM_ID    = '01WXH6UQLLYEJT652WHVB3YHHWKHKE7JN5';
+const SHEET_NAME = 'Main_Raw Data';
+const BATCH_SIZE = 5000;
+
+const REDIRECT_URI = 'https://conduet-analytics.github.io/dashboard/kpi_live_dashboard.html';
+const SCOPES = ['User.Read', 'Files.ReadWrite.All', 'Sites.ReadWrite.All'];
+let msalInst = null;
+let charts = {};
+
+// ── AUTH — same pattern as colleague ─────────────────
+function getMsal() {
+  if (msalInst) return msalInst;
+  msalInst = new msal.PublicClientApplication({
+    auth: { clientId: CLIENT_ID, authority: 'https://login.microsoftonline.com/' + TENANT_ID, redirectUri: REDIRECT_URI },
+    cache: { cacheLocation: 'sessionStorage' }
+  });
+  return msalInst;
+}
+
+window.signIn = async function() {
+  try {
+    const i = getMsal();
+    await i.initialize();
+    await i.loginRedirect({ scopes: SCOPES });
+  } catch(e) { alert('Sign in failed: ' + e.message); }
+}
+
+window.signOut = function() {
+  getMsal().logoutRedirect({ postLogoutRedirectUri: REDIRECT_URI });
+}
+
+async function getToken() {
+  const i = getMsal();
+  const a = i.getActiveAccount() || i.getAllAccounts()[0];
+  if (!a) throw new Error('Not signed in');
+  try {
+    return (await i.acquireTokenSilent({ scopes: SCOPES, account: a })).accessToken;
+  } catch(e) {
+    await i.acquireTokenRedirect({ scopes: SCOPES, account: a });
+    return null;
+  }
+}
+
+function populateMonths() {
+  const year = document.getElementById('sel-year').value;
+  const monthSel = document.getElementById('sel-month');
+  const months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const now = new Date();
+  const curYear = now.getFullYear();
+  const curMonth = now.getMonth(); // 0-indexed
+  monthSel.innerHTML = '';
+  months.forEach((m, i) => {
+    if (parseInt(year) === curYear && i > curMonth) return;
+    const opt = document.createElement('option');
+    opt.value = m;
+    opt.textContent = m;
+    if (parseInt(year) === curYear && i === curMonth) opt.selected = true;
+    monthSel.appendChild(opt);
+  });
+  // Select last option by default
+  if (!monthSel.querySelector('option[selected]'))
+    monthSel.lastElementChild && (monthSel.lastElementChild.selected = true);
+}
+
+function initDateSelectors() {
+  const yearSel = document.getElementById('sel-year');
+  const now = new Date();
+  for (let y = now.getFullYear(); y >= 2025; y--) {
+    const opt = document.createElement('option');
+    opt.value = y; opt.textContent = y;
+    yearSel.appendChild(opt);
+  }
+  populateMonths();
+}
+
+function onSignedIn(account) {
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('nav-user').textContent = account.name || account.username;
+  document.getElementById('nav-user').style.display = 'inline';
+  document.getElementById('btn-signout').style.display = 'inline';
+  initDateSelectors();
+  loadData();
+}
+
+// Handle redirect on page load
+(async () => {
+  try {
+    const i = getMsal();
+    await i.initialize();
+    const result = await i.handleRedirectPromise();
+    if (result && result.account) {
+      i.setActiveAccount(result.account);
+      onSignedIn(result.account);
+      return;
+    }
+    const accounts = i.getAllAccounts();
+    if (accounts.length > 0) {
+      i.setActiveAccount(accounts[0]);
+      onSignedIn(accounts[0]);
+    }
+  } catch(e) { console.error(e); }
+})();
+
+// ── DATA LOADING ──────────────────────────────────────
+function setLoading(show, text = '', pct = 0) {
+  document.getElementById('loading-screen').style.display = show ? 'flex' : 'none';
+  document.getElementById('dashboard').style.display = show ? 'none' : 'block';
+  if (show) {
+    document.getElementById('loading-text').textContent = text;
+    document.getElementById('progress-bar').style.width = pct + '%';
+  }
+}
+
+async function graphGet(url, token) {
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) throw new Error(`Graph API error ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+async function loadData() {
+  setLoading(true, 'Connecting to SharePoint...', 5);
+  try {
+    const token = await getToken();
+
+    // Get selected period
+    const selYear  = parseInt(document.getElementById('sel-year')?.value  || new Date().getFullYear());
+    const selMonth = document.getElementById('sel-month')?.value || 'May';
+    const MONTH_ORDER = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    const selMonthIdx = MONTH_ORDER.indexOf(selMonth);
+
+    // Build list of months to load (selected ± 2 months)
+    const monthsToLoad = [];
+    for (let offset = -2; offset <= 2; offset++) {
+      let mIdx = selMonthIdx + offset;
+      let yr = selYear;
+      if (mIdx < 0)  { mIdx += 12; yr--; }
+      if (mIdx > 11) { mIdx -= 12; yr++; }
+      monthsToLoad.push({ month: MONTH_ORDER[mIdx], year: yr });
+    }
+
+    setLoading(true, `Loading ${selMonth} ${selYear} data...`, 15);
+    const wbBase = `https://graph.microsoft.com/v1.0/drives/${DRIVE_ID}/items/${ITEM_ID}/workbook`;
+    const base   = `${wbBase}/worksheets('${encodeURIComponent(SHEET_NAME)}')`;
+
+    // Create session
+    const sessionRes = await fetch(`${wbBase}/createSession`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ persistChanges: false })
+    });
+    const session = await sessionRes.json();
+    const sessionId = session.id;
+
+    const sessionGet = async (url) => {
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}`, 'workbook-session-id': sessionId } });
+      if (!res.ok) throw new Error(`Graph API error ${res.status}: ${await res.text()}`);
+      return res.json();
+    };
+
+    // Get total rows
+    const dimRes = await sessionGet(`${base}/usedRange(valuesOnly=true)?$select=rowCount`);
+    const totalRows = dimRes.rowCount;
+
+    // Get headers — read wider range to find all columns
+    const hdrRes = await sessionGet(`${base}/range(address='A1:AZ1')?$select=values`);
+    const headers = hdrRes.values[0];
+    const calMonthIdx = headers.indexOf('Cal Month');
+    const yearIdx     = headers.indexOf('Year');
+
+    // Read from END of file backwards — recent data is at bottom
+    // Each month has ~4000 rows, 5 months = ~20000 rows max from end
+    const allRows = [headers];
+    const ROWS_FROM_END = 25000; // read last 25K rows — covers ~6 months
+    const startScan = Math.max(2, totalRows - ROWS_FROM_END);
+
+    setLoading(true, `Reading recent data (last ${(totalRows - startScan).toLocaleString()} rows)...`, 30);
+
+    const BATCH = 5000;
+    const scanBatches = Math.ceil((totalRows - startScan) / BATCH);
+
+    for (let b = 0; b < scanBatches; b++) {
+      const startRow = startScan + b * BATCH;
+      const endRow   = Math.min(startRow + BATCH - 1, totalRows);
+      const pct = 30 + Math.round((b / scanBatches) * 55);
+      setLoading(true, `Loading data... batch ${b+1} of ${scanBatches}`, pct);
+      const batchRes = await sessionGet(`${base}/range(address='A${startRow}:AZ${endRow}')?$select=values`);
+      const filtered = batchRes.values.filter(row => {
+        const rowMonth = row[calMonthIdx];
+        const rowYear  = parseInt(row[yearIdx]);
+        return monthsToLoad.some(m => m.month === rowMonth && m.year === rowYear);
+      });
+      allRows.push(...filtered);
+    }
+
+    setLoading(true, `Found ${allRows.length - 1} matching rows`, 87);
+
+    // Close session
+    await fetch(`${wbBase}/closeSession`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'workbook-session-id': sessionId, 'Content-Type': 'application/json' }
+    });
+
+    setLoading(true, 'Computing KPIs...', 88);
+
+    // Debug — log first few rows to console
+    console.log('Total rows loaded:', allRows.length - 1);
+    console.log('Headers:', allRows[0]);
+    if (allRows.length > 1) console.log('Sample row:', allRows[1]);
+    console.log('Months to load:', monthsToLoad);
+
+    if (allRows.length <= 1) {
+      throw new Error(`No data found for ${selMonth} ${selYear}. The data may be outside the last 25,000 rows. Try selecting a more recent month.`);
+    }
+
+    const kpiData = computeKPIs(allRows);
+
+    console.log('Weekly periods:', Object.keys(kpiData.weekly));
+    console.log('Monthly periods:', Object.keys(kpiData.monthly));
+
+    if (!Object.keys(kpiData.weekly).length && !Object.keys(kpiData.monthly).length) {
+      throw new Error(`Data found (${allRows.length-1} rows) but no KPIs computed. Check console for details.`);
+    }
+
+    setLoading(true, 'Rendering dashboard...', 96);
+    renderDashboard(kpiData);
+
+    setLoading(false);
+    document.getElementById('last-refresh-time').textContent = new Date().toLocaleString();
+  } catch(e) {
+    setLoading(false);
+    const dash = document.getElementById('dashboard');
+    const err = document.createElement('div');
+    err.className = 'error-box';
+    err.innerHTML = `❌ <b>Error loading data:</b> ${e.message}<br><small>Check that the app has Files.Read.All permission and the file exists.</small>`;
+    dash.insertBefore(err, dash.firstChild);
+    console.error(e);
+  }
+}
+
+// ── KPI COMPUTATION ───────────────────────────────────
+function computeKPIs(rows) {
+  const headers = rows[0];
+  const ci = name => headers.indexOf(name);
+
+  console.log('All headers:', headers);
+
+  const C = {
+    loc:        ci('Location'),
+    agent:      ci('Agent Name'),
+    weekEnd:    ci('Week End'),
+    month:      ci('Cal Month'),
+    year:       ci('Year'),
+    empStat:    ci('Emp Status'),
+    // Messaging
+    msgHndl:    ci('Messaging Handled'),
+    msgAHT:     ci('Messaging AHT (sec)'),
+    msgSLA:     ci('Messaging within SLA'),
+    // Email
+    emailHndl:  ci('Email Handled'),
+    emailAHT:   ci('Email AHT (sec)'),
+    emailCont:  ci('Email Contacts w/ Handle Time'),
+    emailSLA:   ci('Email SLA < 12 hrs'),
+    // CSAT
+    csatS:      ci('Overall CSAT Score'),
+    csatC:      ci('Overall Survey Count without blank'),
+    mcsatS:     ci('Messaging CSAT Score'),
+    mcsatC:     ci('Messaging Survey Count without blank'),
+    ecsatS:     ci('Email CSAT Score'),
+    ecsatC:     ci('Email Survey Count without blank'),
+    // QA
+    qaScore:    ci('Total QA Score'),
+    qaRev:      ci('Total QA Reviews'),
+    // Attendance / CPH
+    loginHrs:   ci('Login Hours'),
+    schedHrs:   ci('Scheduled Hours'),
+    prodHrs:    ci('Productive Hours'),
+    present:    ci('# of Present'),
+    // Adherence
+    rostered:   ci('Rostered less Leave'),
+    ooa:        ci('OOA'),
+  };
+
+  console.log('Column indices:', C);
+  console.log('Sample row location:', rows[1]?.[C.loc], '| empStat:', rows[1]?.[C.empStat], '| weekEnd:', rows[1]?.[C.weekEnd]);
+
+  const MONTH_ORDER = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const n = v => Number(v) || 0;
+
+  function agg(rows) {
+    if (!rows.length) return null;
+    const hc       = new Set(rows.map(r => r[C.agent])).size;
+    // Messaging
+    const msg      = rows.reduce((s,r) => s + n(r[C.msgHndl]), 0);
+    const ahtSec   = rows.reduce((s,r) => s + n(r[C.msgAHT]),  0);
+    const slaC     = rows.reduce((s,r) => s + n(r[C.msgSLA]),  0);
+    // Email
+    const email    = rows.reduce((s,r) => s + n(r[C.emailHndl]), 0);
+    const eAhtSec  = rows.reduce((s,r) => s + n(r[C.emailAHT]),  0);
+    const eAhtCnt  = rows.reduce((s,r) => s + n(r[C.emailCont]), 0);
+    const eSlaOk   = rows.reduce((s,r) => s + n(r[C.emailSLA]),  0);
+    // CSAT
+    const csN      = rows.reduce((s,r) => s + n(r[C.csatS])  * n(r[C.csatC]),  0);
+    const csD      = rows.reduce((s,r) => s + n(r[C.csatC]),  0);
+    const msN      = rows.reduce((s,r) => s + n(r[C.mcsatS]) * n(r[C.mcsatC]), 0);
+    const msD      = rows.reduce((s,r) => s + n(r[C.mcsatC]), 0);
+    const esN      = rows.reduce((s,r) => s + n(r[C.ecsatS]) * n(r[C.ecsatC]), 0);
+    const esD      = rows.reduce((s,r) => s + n(r[C.ecsatC]), 0);
+    // QA
+    const qaS      = rows.reduce((s,r) => s + n(r[C.qaScore]), 0);
+    const qaR      = rows.reduce((s,r) => s + n(r[C.qaRev]),   0);
+    // Attendance = Login Hours / Scheduled Hours
+    const loginH   = rows.reduce((s,r) => s + n(r[C.loginHrs]),  0);
+    const schedH   = rows.reduce((s,r) => s + n(r[C.schedHrs]),  0);
+    const prodH    = rows.reduce((s,r) => s + n(r[C.prodHrs]),   0);
+    // Adherence = (Rostered less Leave - OOA) / Rostered less Leave
+    const rost     = rows.reduce((s,r) => s + n(r[C.rostered]), 0);
+    const ooa      = rows.reduce((s,r) => s + n(r[C.ooa]),      0);
+
+    return {
+      hc,
+      csat:        csD  ? +(csN/csD).toFixed(2)   : null,
+      msg_csat:    msD  ? +(msN/msD).toFixed(2)   : null,
+      email_csat:  esD  ? +(esN/esD).toFixed(2)   : null,
+      aht:         msg  ? +(ahtSec/msg/60).toFixed(2) : null,
+      email_aht:   eAhtCnt ? +(eAhtSec/eAhtCnt/60).toFixed(2) : null,
+      quality:     qaR  ? +((qaS/qaR)/100*100).toFixed(2) : null,
+      msg_sla:     msg  ? +(slaC/msg*100).toFixed(2) : null,
+      email_sla:   email ? +(eSlaOk/email*100).toFixed(2) : null,
+      contacts:    msg + email,
+      cph:         prodH ? +((msg+email)/prodH).toFixed(2) : null,
+      attendance:  schedH ? +(loginH/schedH*100).toFixed(2) : null,
+      adherence:   rost ? +((rost-ooa)/rost*100).toFixed(2) : null,
+    };
+  }
+
+  // Get all valid rows
+  const data = rows.slice(1).filter(r => r[C.weekEnd] != null && r[C.weekEnd] !== '');
+
+  console.log('Valid data rows:', data.length);
+  if (data.length > 0) {
+    console.log('Sample weekEnd:', data[0][C.weekEnd], '| month:', data[0][C.month], '| year:', data[0][C.year]);
+    if (C.loc >= 0) console.log('Sample location:', data[0][C.loc]);
+    if (C.empStat >= 0) console.log('Sample empStat:', data[0][C.empStat]);
+  }
+
+  // Split by location if available
+  const isConduet = r => C.loc < 0 || r[C.loc] === 'conduet';
+  const isHRD     = r => C.loc >= 0 && ['Hard Rock','Las Vegas'].includes(r[C.loc]);
+  const isTenured = r => C.empStat < 0 || r[C.empStat] === 'Tenured';
+  const isNH      = r => C.empStat < 0 || r[C.empStat] === 'New Hires';
+  const isAgent   = r => C.empStat < 0 || ['Tenured','New Hires'].includes(r[C.empStat]);
+
+  const conduet = data.filter(r => isConduet(r) && isAgent(r));
+  const hrd     = data.filter(r => isHRD(r));
+
+  console.log('Conduet rows:', conduet.length, '| HRD rows:', hrd.length);
+
+  // Week end label
+  function weLabel(we) {
+    if (typeof we === 'number') {
+      const d = new Date(Math.round((we - 25569) * 86400 * 1000));
+      return d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'2-digit' });
+    }
+    const s = String(we);
+    if (s.includes('T')) return new Date(s).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'2-digit' });
+    return s;
+  }
+
+  // Last 4 week ends from conduet (or all data if no location split)
+  const src = conduet.length > 0 ? conduet : data;
+  const allWE = [...new Set(src.map(r => r[C.weekEnd]))];
+  allWE.sort((a,b) => {
+    const na = typeof a === 'number' ? a : new Date(String(a)).getTime()/86400000+25569;
+    const nb = typeof b === 'number' ? b : new Date(String(b)).getTime()/86400000+25569;
+    return na - nb;
+  });
+  const weekEnds = allWE.slice(-4);
+  console.log('Week ends found:', weekEnds.length, weekEnds.map(weLabel));
+
+  // Last 5 months
+  const allMonths = [...new Set(src.map(r => `${r[C.year]}|||${r[C.month]}`))];
+  allMonths.sort((a,b) => {
+    const [ya,ma] = a.split('|||'); const [yb,mb] = b.split('|||');
+    return (Number(ya)*12 + MONTH_ORDER.indexOf(ma)) - (Number(yb)*12 + MONTH_ORDER.indexOf(mb));
+  });
+  const last5 = allMonths.filter(k => k.includes('|||') && !k.includes('undefined')).slice(-5);
+  console.log('Months found:', last5);
+
+  const weekly = {};
+  for (const we of weekEnds) {
+    const label = weLabel(we);
+    const cw = conduet.filter(r => r[C.weekEnd] === we);
+    const hw = hrd.filter(r => r[C.weekEnd] === we);
+    const allW = data.filter(r => r[C.weekEnd] === we);
+    weekly[label] = {
+      conduet_total:   agg(cw.length ? cw : allW),
+      conduet_tenured: agg(cw.filter(r => isTenured(r))),
+      conduet_nh:      agg(cw.filter(r => isNH(r))),
+      hrd:             agg(hw),
+    };
+  }
+
+  const monthly = {};
+  for (const mk of last5) {
+    const [yr, mo] = mk.split('|||');
+    const label = `${(mo||'').slice(0,3)} '${String(yr).slice(-2)}`;
+    const cm = conduet.filter(r => String(r[C.year]) === yr && r[C.month] === mo);
+    const hm = hrd.filter(r => String(r[C.year]) === yr && r[C.month] === mo);
+    const allM = data.filter(r => String(r[C.year]) === yr && r[C.month] === mo);
+    monthly[label] = {
+      conduet_total:   agg(cm.length ? cm : allM),
+      conduet_tenured: agg(cm.filter(r => isTenured(r))),
+      conduet_nh:      agg(cm.filter(r => isNH(r))),
+      hrd:             agg(hm),
+    };
+  }
+
+  console.log('Weekly keys:', Object.keys(weekly));
+  console.log('Monthly keys:', Object.keys(monthly));
+  return { weekly, monthly };
+}
+
+// ── RENDER ────────────────────────────────────────────
+const f2  = v => v == null ? '<span class="na">n/a</span>' : v.toFixed(2);
+const fp  = v => v == null ? '<span class="na">n/a</span>' : v.toFixed(2) + '%';
+const fn  = v => v == null ? '<span class="na">n/a</span>' : Number(v).toLocaleString();
+
+function arw(curr, prev, hb) {
+  if (prev == null || curr == null) return '';
+  const d = curr - prev, p = Math.abs(d / (prev || 1));
+  if (p < 0.005) return '<span class="fl">▬</span>';
+  const good = hb ? d > 0 : d < 0;
+  return good ? '<span class="up">▲</span>' : '<span class="dn">▼</span>';
+}
+
+const METRICS = [
+  { key:'csat',       label:'CSAT',                  fmt:f2, hb:true  },
+  { key:'msg_csat',   label:'Messaging CSAT',         fmt:f2, hb:true  },
+  { key:'email_csat', label:'Email CSAT',             fmt:f2, hb:true  },
+  { key:'aht',        label:'AHT Messaging (mins)',   fmt:f2, hb:false },
+  { key:'email_aht',  label:'AHT Email (mins)',       fmt:f2, hb:false },
+  { key:'quality',    label:'Quality',                fmt:fp, hb:true  },
+  { key:'cph',        label:'CPH',                   fmt:f2, hb:true  },
+  { key:'msg_sla',    label:'Messaging SLA',          fmt:fp, hb:true  },
+  { key:'email_sla',  label:'Email SLA',              fmt:fp, hb:true  },
+  { key:'attendance', label:'Attendance %',           fmt:fp, hb:true  },
+  { key:'adherence',  label:'Adherence %',            fmt:fp, hb:true  },
+  { key:'contacts',   label:'Total Contacts Handled', fmt:fn, hb:null  },
+];
+
+function buildTable(data, tblId) {
+  const labels = Object.keys(data);
+  const periods = labels;
+  if (!periods.length) {
+    document.getElementById(tblId).innerHTML = '<tr><td colspan="10" style="padding:20px;color:var(--muted);text-align:center">No data found for selected period.</td></tr>';
+    return;
+  }
+  let h = `<thead><tr><th>KPIs</th>${periods.map(l=>`<th>${l}</th>`).join('')}</tr></thead><tbody>`;
+
+  // HC section
+  h += `<tr class="r-sec"><td>TOTAL ACTIVE HC</td>${periods.map((_,i)=>{
+    const ct = data[periods[i]].conduet_total, hrd = data[periods[i]].hrd;
+    return `<td>${(ct?.hc||0)+(hrd?.hc||0)}</td>`;
+  }).join('')}</tr>`;
+  h += `<tr class="r-c"><td>Conduet</td>${periods.map(p=>`<td>${data[p].conduet_total?.hc??'—'}</td>`).join('')}</tr>`;
+  h += `<tr class="r-t"><td>Tenured</td>${periods.map(p=>`<td>${data[p].conduet_tenured?.hc??'—'}</td>`).join('')}</tr>`;
+  h += `<tr class="r-n"><td>New Hires</td>${periods.map(p=>`<td>${data[p].conduet_nh?.hc??'—'}</td>`).join('')}</tr>`;
+  h += `<tr class="r-h"><td>HRD</td>${periods.map(p=>`<td>${data[p].hrd?.hc??'—'}</td>`).join('')}</tr>`;
+
+  for (const m of METRICS) {
+    h += `<tr class="r-sec"><td>${m.label}</td>`;
+    if (!m.key) {
+      h += `<td colspan="${periods.length}" style="text-align:left;padding-left:12px;color:var(--amber);font-size:10.5px;font-style:italic">⚠ ${m.note}</td></tr>`;
+      continue;
+    }
+    periods.forEach((p,i) => {
+      const v = data[p].conduet_total?.[m.key];
+      const prev = i > 0 ? data[periods[i-1]].conduet_total?.[m.key] : null;
+      h += `<td>${m.hb!==null?arw(v,prev,m.hb):''}${m.fmt(v)}</td>`;
+    });
+    h += `</tr>`;
+    // Conduet
+    h += `<tr class="r-c"><td>Conduet</td>${periods.map(p=>`<td>${m.fmt(data[p].conduet_total?.[m.key])}</td>`).join('')}</tr>`;
+    // Tenured
+    h += `<tr class="r-t"><td>Tenured</td>`;
+    periods.forEach((p,i) => {
+      const v = data[p].conduet_tenured?.[m.key];
+      const prev = i > 0 ? data[periods[i-1]].conduet_tenured?.[m.key] : null;
+      h += `<td>${m.hb!==null?arw(v,prev,m.hb):''}${m.fmt(v)}</td>`;
+    });
+    h += `</tr>`;
+    // New Hires
+    h += `<tr class="r-n"><td>New Hires</td>`;
+    periods.forEach((p,i) => {
+      const v = data[p].conduet_nh?.[m.key];
+      const prev = i > 0 ? data[periods[i-1]].conduet_nh?.[m.key] : null;
+      h += `<td>${m.hb!==null?arw(v,prev,m.hb):''}${m.fmt(v)}</td>`;
+    });
+    h += `</tr>`;
+    // HRD
+    h += `<tr class="r-h"><td>HRD</td>`;
+    periods.forEach((p,i) => {
+      const v = data[p].hrd?.[m.key];
+      const prev = i > 0 ? data[periods[i-1]].hrd?.[m.key] : null;
+      h += `<td>${m.hb!==null?arw(v,prev,m.hb):''}${m.fmt(v)}</td>`;
+    });
+    h += `</tr>`;
+  }
+  h += `</tbody>`;
+  document.getElementById(tblId).innerHTML = h;
+}
+
+function renderSnapCards(weekly) {
+  const periods = Object.keys(weekly);
+  if (!periods.length) {
+    document.getElementById('snap-cards').innerHTML = '<div style="color:var(--muted);padding:20px">No data found for the selected period. Try a different month.</div>';
+    return;
+  }
+  const latest = weekly[periods[periods.length - 1]];
+  const prev   = periods.length > 1 ? weekly[periods[periods.length - 2]] : null;
+  const pct = (curr, p, hb) => {
+    if (!p || !curr) return null;
+    const d = (curr - p) / (p || 1) * 100;
+    const cls = hb ? (d > 0.5 ? 'b-up' : d < -0.5 ? 'b-dn' : 'b-fl') : (d < -0.5 ? 'b-up' : d > 0.5 ? 'b-dn' : 'b-fl');
+    const sign = d > 0 ? '+' : '';
+    const icon = cls === 'b-up' ? '▲' : cls === 'b-dn' ? '▼' : '▬';
+    return `<span class="badge ${cls}">${icon} ${sign}${d.toFixed(1)}% WoW</span>`;
+  };
+  const cards = [
+    { lbl:'Conduet HC',    val: latest.conduet_total?.hc??'—',  sub:`T:${latest.conduet_tenured?.hc??'—'} · NH:${latest.conduet_nh?.hc??'—'}`, badge: pct(latest.conduet_total?.hc, prev?.conduet_total?.hc, true), cls:'' },
+    { lbl:'HRD HC',        val: latest.hrd?.hc??'—',            sub:'Total only', badge: pct(latest.hrd?.hc, prev?.hrd?.hc, true), cls:'r' },
+    { lbl:'Conduet CSAT',  val: latest.conduet_total?.csat?.toFixed(2)??'—', sub:`T:${latest.conduet_tenured?.csat?.toFixed(2)??'—'} · NH:${latest.conduet_nh?.csat?.toFixed(2)??'—'}`, badge: pct(latest.conduet_total?.csat, prev?.conduet_total?.csat, true), cls:'t' },
+    { lbl:'HRD CSAT',      val: latest.hrd?.csat?.toFixed(2)??'—', sub:'Total only', badge: pct(latest.hrd?.csat, prev?.hrd?.csat, true), cls:'r' },
+    { lbl:'Quality',       val: latest.conduet_total?.quality?.toFixed(2)+'%'??'—', sub:`T:${latest.conduet_tenured?.quality?.toFixed(2)??'—'}% · NH:${latest.conduet_nh?.quality?.toFixed(2)??'—'}%`, badge: pct(latest.conduet_total?.quality, prev?.conduet_total?.quality, true), cls:'g' },
+    { lbl:'Msg AHT',       val: latest.conduet_total?.aht?.toFixed(2)+'m'??'—', sub:`T:${latest.conduet_tenured?.aht?.toFixed(2)??'—'} · NH:${latest.conduet_nh?.aht?.toFixed(2)??'—'}`, badge: pct(latest.conduet_total?.aht, prev?.conduet_total?.aht, false), cls:'o' },
+    { lbl:'Msg SLA',       val: latest.conduet_total?.msg_sla?.toFixed(2)+'%'??'—', sub:`T:${latest.conduet_tenured?.msg_sla?.toFixed(2)??'—'}% · NH:${latest.conduet_nh?.msg_sla?.toFixed(2)??'—'}%`, badge: pct(latest.conduet_total?.msg_sla, prev?.conduet_total?.msg_sla, true), cls:'b' },
+    { lbl:'Contact Vol',   val: (latest.conduet_total?.contacts + (latest.hrd?.contacts||0)).toLocaleString()??'—', sub:`C:${latest.conduet_total?.contacts?.toLocaleString()??'—'} · HRD:${latest.hrd?.contacts?.toLocaleString()??'—'}`, badge: null, cls:'r' },
+  ];
+  document.getElementById('snap-cards').innerHTML = cards.map(c =>
+    `<div class="card ${c.cls}"><div class="card-lbl">${c.lbl}</div><div class="card-val">${c.val}</div><div class="card-sub">${c.sub}</div>${c.badge||''}</div>`
+  ).join('');
+}
+
+function renderCharts(monthly) {
+  const labels = Object.keys(monthly);
+  const get = (grp, key) => labels.map(l => monthly[l][grp]?.[key] ?? null);
+  const opts = {
+    responsive:true, maintainAspectRatio:false,
+    plugins:{ legend:{ position:'bottom', labels:{ font:{size:9.5}, boxWidth:9, padding:7 } } },
+    scales:{
+      x:{ ticks:{font:{size:9.5}}, grid:{display:false} },
+      y:{ ticks:{font:{size:9.5}}, grid:{color:'#f0f0f0'} }
+    }
+  };
+  const line = (id, datasets, yExtra) => {
+    if (charts[id]) charts[id].destroy();
+    charts[id] = new Chart(document.getElementById(id), { type:'line',
+      data:{labels, datasets},
+      options:{...opts, scales:{...opts.scales, y:{...opts.scales.y, ...(yExtra||{})}}}
+    });
+  };
+  const bar = (id, datasets) => {
+    if (charts[id]) charts[id].destroy();
+    charts[id] = new Chart(document.getElementById(id), { type:'bar',
+      data:{labels, datasets},
+      options:{...opts}
+    });
+  };
+  const ds = (lbl,data,color,dash) => ({
+    label:lbl, data, borderColor:color,
+    backgroundColor: dash ? 'transparent' : color+'22',
+    tension:.35, pointRadius:3, borderWidth:2, fill:!dash,
+    ...(dash ? {borderDash:dash} : {})
+  });
+  const dsb = (lbl,data,color,stack) => ({ label:lbl, data, backgroundColor:color, borderRadius:4, stack });
+
+  line('c-csat',  [ds('Conduet',get('conduet_total','csat'),'#5b2c8d'), ds('C-Tenured',get('conduet_tenured','csat'),'#8e44ad',[4,3]), ds('C-NH',get('conduet_nh','csat'),'#e07b00',[2,3]), ds('HRD',get('hrd','csat'),'#c0392b',[6,3])]);
+  line('c-mcsat', [ds('Conduet',get('conduet_total','msg_csat'),'#5b2c8d'), ds('C-Tenured',get('conduet_tenured','msg_csat'),'#8e44ad',[4,3]), ds('C-NH',get('conduet_nh','msg_csat'),'#e07b00',[2,3]), ds('HRD',get('hrd','msg_csat'),'#c0392b',[6,3])]);
+  line('c-qa',    [ds('Conduet',get('conduet_total','quality'),'#1b7f3a'), ds('C-Tenured',get('conduet_tenured','quality'),'#27ae60',[4,3]), ds('C-NH',get('conduet_nh','quality'),'#e07b00',[2,3]), ds('HRD',get('hrd','quality'),'#c0392b',[6,3])], {min:78, max:95});
+  line('c-aht',   [ds('Conduet',get('conduet_total','aht'),'#1565c0'), ds('C-Tenured',get('conduet_tenured','aht'),'#2196f3',[4,3]), ds('C-NH',get('conduet_nh','aht'),'#e07b00',[2,3]), ds('HRD',get('hrd','aht'),'#c0392b',[6,3])], {min:9, max:13});
+  line('c-sla',   [ds('Conduet',get('conduet_total','msg_sla'),'#0d7f7f'), ds('C-Tenured',get('conduet_tenured','msg_sla'),'#16a085',[4,3]), ds('C-NH',get('conduet_nh','msg_sla'),'#e07b00',[2,3]), ds('HRD',get('hrd','msg_sla'),'#c0392b',[6,3])]);
+  bar('c-vol',    [dsb('Conduet-Tenured',get('conduet_tenured','contacts'),'rgba(91,44,141,.75)','v'), dsb('Conduet-NH',get('conduet_nh','contacts'),'rgba(224,123,0,.75)','v'), dsb('HRD',get('hrd','contacts'),'rgba(192,57,43,.75)','v')]);
+}
+
+function renderDashboard({ weekly, monthly }) {
+  renderSnapCards(weekly);
+  renderCharts(monthly);
+  buildTable(weekly, 'tbl-weekly');
+  buildTable(monthly, 'tbl-monthly');
+}
+
+// ── TABS ──────────────────────────────────────────────
+window.showTab = function(id, btn) {
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
+  document.getElementById('pane-'+id).classList.add('active');
+  btn.classList.add('active');
+}
+
+} // end initApp
+</script>
+</body>
+</html>
