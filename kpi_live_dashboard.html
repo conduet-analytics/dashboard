@@ -611,11 +611,23 @@ function computeKPIs(rows) {
     };
   }
 
-  const data = rows.slice(1).filter(r =>
-    ['conduet','Hard Rock','Las Vegas'].includes(r[C.loc]) && r[C.weekEnd]
-  );
-  const conduet = data.filter(r => r[C.loc] === 'conduet' && ['Tenured','New Hires'].includes(r[C.empStat]));
-  const hrd     = data.filter(r => ['Hard Rock','Las Vegas'].includes(r[C.loc]));
+  // Filter valid rows — if Location column exists use it, otherwise take all rows with a weekEnd
+  const hasLoc     = C.loc >= 0;
+  const hasEmpStat = C.empStat >= 0;
+
+  console.log('hasLoc:', hasLoc, 'hasEmpStat:', hasEmpStat, 'C.loc:', C.loc, 'C.empStat:', C.empStat);
+
+  const data = rows.slice(1).filter(r => r[C.weekEnd]);
+
+  const conduet = hasLoc
+    ? data.filter(r => r[C.loc] === 'conduet' && (!hasEmpStat || ['Tenured','New Hires'].includes(r[C.empStat])))
+    : data.filter(r => !hasEmpStat || ['Tenured','New Hires'].includes(r[C.empStat]));
+
+  const hrd = hasLoc
+    ? data.filter(r => ['Hard Rock','Las Vegas'].includes(r[C.loc]))
+    : [];
+
+  console.log('Total data rows:', data.length, '| conduet:', conduet.length, '| hrd:', hrd.length);
 
   // Last 4 week ends
   const weekEnds = [...new Set(conduet.map(r => r[C.weekEnd]))].sort().slice(-4);
