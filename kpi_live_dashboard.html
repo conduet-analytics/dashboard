@@ -218,9 +218,14 @@ footer { text-align: center; font-size: 10px; color: var(--muted); margin-top: 2
 <div id="dashboard">
 <div class="main">
 
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
-    <span class="last-refresh">🕐 Last refreshed: <span id="last-refresh-time">—</span></span>
-    <button class="refresh-btn" onclick="loadData()">🔄 Refresh Data</button>
+  <!-- DATE RANGE SELECTOR -->
+  <div style="background:#fff;border-radius:12px;padding:14px 18px;box-shadow:0 1px 5px rgba(0,0,0,.07);margin-bottom:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+    <span style="font-weight:700;font-size:13px;color:var(--purple);">📅 Select Period</span>
+    <select id="sel-year" style="border:1.5px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;font-weight:600;cursor:pointer;outline:none;" onchange="populateMonths()"></select>
+    <select id="sel-month" style="border:1.5px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;font-weight:600;cursor:pointer;outline:none;"></select>
+    <button onclick="loadData()" style="background:var(--purple);color:#fff;border:none;border-radius:8px;padding:7px 18px;font-size:13px;font-weight:700;cursor:pointer;">Load Data</button>
+    <span style="font-size:11px;color:var(--muted);">Loads selected month + 2 months before & after</span>
+    <span style="margin-left:auto;font-size:11px;color:var(--muted);">🕐 Last refreshed: <span id="last-refresh-time">—</span></span>
   </div>
 
   <div class="sec-label">📅 Latest Week Snapshot</div>
@@ -314,11 +319,44 @@ async function getToken() {
   }
 }
 
+function populateMonths() {
+  const year = document.getElementById('sel-year').value;
+  const monthSel = document.getElementById('sel-month');
+  const months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const now = new Date();
+  const curYear = now.getFullYear();
+  const curMonth = now.getMonth(); // 0-indexed
+  monthSel.innerHTML = '';
+  months.forEach((m, i) => {
+    if (parseInt(year) === curYear && i > curMonth) return;
+    const opt = document.createElement('option');
+    opt.value = m;
+    opt.textContent = m;
+    if (parseInt(year) === curYear && i === curMonth) opt.selected = true;
+    monthSel.appendChild(opt);
+  });
+  // Select last option by default
+  if (!monthSel.querySelector('option[selected]'))
+    monthSel.lastElementChild && (monthSel.lastElementChild.selected = true);
+}
+
+function initDateSelectors() {
+  const yearSel = document.getElementById('sel-year');
+  const now = new Date();
+  for (let y = now.getFullYear(); y >= 2025; y--) {
+    const opt = document.createElement('option');
+    opt.value = y; opt.textContent = y;
+    yearSel.appendChild(opt);
+  }
+  populateMonths();
+}
+
 function onSignedIn(account) {
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('nav-user').textContent = account.name || account.username;
   document.getElementById('nav-user').style.display = 'inline';
   document.getElementById('btn-signout').style.display = 'inline';
+  initDateSelectors();
   loadData();
 }
 
@@ -361,10 +399,28 @@ async function loadData() {
   setLoading(true, 'Connecting to SharePoint...', 5);
   try {
     const token = await getToken();
-    const wbBase = `https://graph.microsoft.com/v1.0/drives/${DRIVE_ID}/items/${ITEM_ID}/workbook`;
 
-    // Create a persistent session for large file handling
-    setLoading(true, 'Opening workbook session...', 10);
+    // Get selected period
+    const selYear  = parseInt(document.getElementById('sel-year')?.value  || new Date().getFullYear());
+    const selMonth = document.getElementById('sel-month')?.value || 'May';
+    const MONTH_ORDER = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    const selMonthIdx = MONTH_ORDER.indexOf(selMonth);
+
+    // Build list of months to load (selected ± 2 months)
+    const monthsToLoad = [];
+    for (let offset = -2; offset <= 2; offset++) {
+      let mIdx = selMonthIdx + offset;
+      let yr = selYear;
+      if (mIdx < 0)  { mIdx += 12; yr--; }
+      if (mIdx > 11) { mIdx -= 12; yr++; }
+      monthsToLoad.push({ month: MONTH_ORDER[mIdx], year: yr });
+    }
+
+    setLoading(true, `Loading ${selMonth} ${selYear} data...`, 15);
+    const wbBase = `https://graph.microsoft.com/v1.0/drives/${DRIVE_ID}/items/${ITEM_ID}/workbook`;
+    const base   = `${wbBase}/worksheets('${encodeURIComponent(SHEET_NAME)}')`;
+
+    // Create session
     const sessionRes = await fetch(`${wbBase}/createSession`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -379,30 +435,42 @@ async function loadData() {
       return res.json();
     };
 
-    const base = `${wbBase}/worksheets('${encodeURIComponent(SHEET_NAME)}')`;
-
-    // Step 1: Get row count
-    setLoading(true, 'Reading file dimensions...', 15);
+    // Get total rows
     const dimRes = await sessionGet(`${base}/usedRange(valuesOnly=true)?$select=rowCount`);
     const totalRows = dimRes.rowCount;
 
-    // Step 2: Read only columns A-AD in batches of 3000
-    const allRows = [];
-    const OPTIMIZED_BATCH = 3000;
-    const batches = Math.ceil((totalRows - 1) / OPTIMIZED_BATCH);
-
-    // Get headers first
+    // Get headers
     const hdrRes = await sessionGet(`${base}/range(address='A1:AD1')?$select=values`);
-    allRows.push(hdrRes.values[0]);
+    const headers = hdrRes.values[0];
+    const calMonthIdx = headers.indexOf('Cal Month');
+    const yearIdx     = headers.indexOf('Year');
 
-    for (let b = 0; b < batches; b++) {
-      const startRow = b * OPTIMIZED_BATCH + 2;
-      const endRow   = Math.min(startRow + OPTIMIZED_BATCH - 1, totalRows);
-      const pct = 20 + Math.round((b / batches) * 65);
-      setLoading(true, `Loading data... (${Math.min(endRow, totalRows-1).toLocaleString()} of ${(totalRows-1).toLocaleString()} rows)`, pct);
+    // Read from END of file backwards — recent data is at bottom
+    // Each month has ~4000 rows, 5 months = ~20000 rows max from end
+    const allRows = [headers];
+    const ROWS_FROM_END = 25000; // read last 25K rows — covers ~6 months
+    const startScan = Math.max(2, totalRows - ROWS_FROM_END);
+
+    setLoading(true, `Reading recent data (last ${(totalRows - startScan).toLocaleString()} rows)...`, 30);
+
+    const BATCH = 5000;
+    const scanBatches = Math.ceil((totalRows - startScan) / BATCH);
+
+    for (let b = 0; b < scanBatches; b++) {
+      const startRow = startScan + b * BATCH;
+      const endRow   = Math.min(startRow + BATCH - 1, totalRows);
+      const pct = 30 + Math.round((b / scanBatches) * 55);
+      setLoading(true, `Loading data... batch ${b+1} of ${scanBatches}`, pct);
       const batchRes = await sessionGet(`${base}/range(address='A${startRow}:AD${endRow}')?$select=values`);
-      allRows.push(...batchRes.values);
+      const filtered = batchRes.values.filter(row => {
+        const rowMonth = row[calMonthIdx];
+        const rowYear  = parseInt(row[yearIdx]);
+        return monthsToLoad.some(m => m.month === rowMonth && m.year === rowYear);
+      });
+      allRows.push(...filtered);
     }
+
+    setLoading(true, `Found ${allRows.length - 1} matching rows`, 87);
 
     // Close session
     await fetch(`${wbBase}/closeSession`, {
