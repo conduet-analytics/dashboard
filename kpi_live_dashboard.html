@@ -479,7 +479,25 @@ async function loadData() {
     });
 
     setLoading(true, 'Computing KPIs...', 88);
+
+    // Debug — log first few rows to console
+    console.log('Total rows loaded:', allRows.length - 1);
+    console.log('Headers:', allRows[0]);
+    if (allRows.length > 1) console.log('Sample row:', allRows[1]);
+    console.log('Months to load:', monthsToLoad);
+
+    if (allRows.length <= 1) {
+      throw new Error(`No data found for ${selMonth} ${selYear}. The data may be outside the last 25,000 rows. Try selecting a more recent month.`);
+    }
+
     const kpiData = computeKPIs(allRows);
+
+    console.log('Weekly periods:', Object.keys(kpiData.weekly));
+    console.log('Monthly periods:', Object.keys(kpiData.monthly));
+
+    if (!Object.keys(kpiData.weekly).length && !Object.keys(kpiData.monthly).length) {
+      throw new Error(`Data found (${allRows.length-1} rows) but no KPIs computed. Check console for details.`);
+    }
 
     setLoading(true, 'Rendering dashboard...', 96);
     renderDashboard(kpiData);
