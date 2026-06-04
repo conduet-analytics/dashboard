@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HRD CS · KPI Performance Dashboard</title>
+<script src="https://unpkg.com/@azure/msal-browser@2.38.3/lib/msal-browser.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.js"></script>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- ── LOGIN SCREEN ────────────────────────────────────── -->
+<div id="page-login" class="page active">
+  <div class="login-box">
+    <div class="login-icon">📊</div>
+    <h1>HRD CS KPI Dashboard</h1>
+    <p class="login-sub">Sign in with your Microsoft account to access live KPI data from SharePoint.</p>
+    <button class="btn-ms" onclick="signIn()">
+      <svg viewBox="0 0 21 21" fill="none" width="20" height="20">
+        <rect x="1" y="1" width="9" height="9" fill="#f25022"/>
+        <rect x="11" y="1" width="9" height="9" fill="#7fba00"/>
+        <rect x="1" y="11" width="9" height="9" fill="#00a4ef"/>
+        <rect x="11" y="11" width="9" height="9" fill="#ffb900"/>
+      </svg>
+      Sign in with Microsoft
+    </button>
+    <p class="login-note">Access restricted to conduet.com &amp; conduet.cx accounts</p>
+  </div>
+</div>
+
+<!-- ── LOADING SCREEN ──────────────────────────────────── -->
+<div id="page-loading" class="page">
+  <div class="spinner"></div>
+  <p id="loading-msg" class="loading-msg">Loading KPI data...</p>
+</div>
+
+<!-- ── DASHBOARD ──────────────────────────────────────── -->
+<div id="page-app" class="page">
+
+  <nav>
+    <div class="nav-left">
+      <div class="nav-icon">📊</div>
+      <div>
+        <div class="nav-title">HRD CS · KPI Performance Dashboard</div>
+        <div class="nav-sub">Conduet vs Hard Rock · Tenured vs New Hires</div>
+      </div>
+    </div>
+    <div class="nav-right">
+      <span id="api-badge" class="pill">Connecting...</span>
+      <span class="user-pill" id="hdr-user">—</span>
+      <button class="btn-out" onclick="signOut()">Sign Out</button>
+    </div>
+  </nav>
+
+  <div id="status-bar" style="display:none"></div>
+
+  <div class="main">
+
+    <!-- PERIOD SELECTOR -->
+    <div class="period-bar">
+      <span style="font-weight:700;font-size:13px;color:var(--purple);">📅 Select Period</span>
+      <select id="sel-year"></select>
+      <select id="sel-month"></select>
+      <button id="btn-load" onclick="loadDashboard()">🔄 Refresh</button>
+      <span style="font-size:11px;color:var(--muted);">Shows Jan → selected month</span>
+      <span style="margin-left:auto;font-size:11px;color:var(--muted);">🕐 <span id="last-refresh-time">—</span></span>
+    </div>
+
+    <!-- SNAPSHOT CARDS -->
+    <div class="sec-label">📅 Latest Week Snapshot</div>
+    <div class="cards" id="snap-cards"></div>
+
+    <!-- CHARTS -->
+    <div class="sec-label">📈 Monthly Trends</div>
+    <div class="charts">
+      <div class="ch-card"><div class="ch-title">Overall CSAT</div><div class="ch-wrap"><canvas id="c-csat"></canvas></div></div>
+      <div class="ch-card"><div class="ch-title">Messaging CSAT</div><div class="ch-wrap"><canvas id="c-mcsat"></canvas></div></div>
+      <div class="ch-card"><div class="ch-title">Quality (%)</div><div class="ch-wrap"><canvas id="c-qa"></canvas></div></div>
+      <div class="ch-card"><div class="ch-title">AHT Messaging (mins)</div><div class="ch-wrap"><canvas id="c-aht"></canvas></div></div>
+      <div class="ch-card"><div class="ch-title">Messaging SLA (%)</div><div class="ch-wrap"><canvas id="c-sla"></canvas></div></div>
+      <div class="ch-card"><div class="ch-title">Contact Volume</div><div class="ch-wrap"><canvas id="c-vol"></canvas></div></div>
+    </div>
+
+    <!-- TABLES -->
+    <div class="sec-label">📋 KPI Summary Tables</div>
+    <div class="legend">
+      <span class="leg leg-c">● Conduet</span>
+      <span class="leg leg-h">● HRD</span>
+      <span class="leg leg-t">– Tenured</span>
+      <span class="leg leg-n">– New Hires</span>
+    </div>
+    <div class="tabs">
+      <button class="tab active" onclick="showTab('weekly',this)">📅 Weekly</button>
+      <button class="tab" onclick="showTab('monthly',this)">📆 Monthly</button>
+    </div>
+    <div class="tab-pane active" id="pane-weekly">
+      <div class="tbl-card">
+        <div class="tbl-hdr purple">📊 WEEKLY KPI SUMMARY — Conduet &amp; HRD · Tenured vs New Hires</div>
+        <div style="overflow-x:auto"><table class="kpi-tbl" id="tbl-weekly"></table></div>
+      </div>
+    </div>
+    <div class="tab-pane" id="pane-monthly">
+      <div class="tbl-card">
+        <div class="tbl-hdr teal">📊 MONTHLY KPI SUMMARY — Conduet &amp; HRD · Tenured vs New Hires</div>
+        <div style="overflow-x:auto"><table class="kpi-tbl" id="tbl-monthly"></table></div>
+      </div>
+    </div>
+
+  </div><!-- /main -->
+  <footer>HRD CS KPI Dashboard · Live from SharePoint · KPI Performance – HRD vs Conduet.xlsx</footer>
+</div><!-- /page-app -->
+
+<script src="auth.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
