@@ -23,14 +23,12 @@ if (typeof msal === 'undefined') {
   };
   window.signOut = function () {};
   window.getToken = function () { return null; };
-  // Stop here — don't try to create MSAL instance
 } else {
 
 // ── Azure AD app registration ────────────────────────────────────────────────
 const AUTH_CONFIG = {
-  clientId:  '7dfd41b7-1960-49c6-a701-b021a28550bb',
+  clientId:  'fb723393-bd9d-4052-9f18-e9b65a6174c4',
   tenantId:  '3acfc3b8-ea64-4ce1-8910-f91e9c67a3fc',
-  // Dynamically build redirect URI from current page URL
   get redirectUri() {
     return window.location.origin + window.location.pathname;
   },
@@ -39,8 +37,8 @@ const AUTH_CONFIG = {
 // Scopes needed to read SharePoint Excel files via Graph API
 const GRAPH_SCOPES = [
   'User.Read',
-  'Files.ReadWrite.All',
-  'Sites.ReadWrite.All',
+  'Files.ReadWrite',
+  'Sites.Selected',
 ];
 
 let _msalInstance = null;
@@ -117,7 +115,6 @@ function showDashboard(account) {
     badge.style.background = 'rgba(255,255,255,.18)';
   }
 
-  // Notify app.js that auth is done
   if (typeof onSignedIn === 'function') onSignedIn(account);
 }
 
@@ -125,8 +122,6 @@ function showDashboard(account) {
 (async function initAuth() {
   try {
     const instance = getMsal();
-
-    // Handle the redirect response (if returning from login)
     const redirectResult = await instance.handleRedirectPromise();
 
     if (redirectResult && redirectResult.account) {
@@ -135,15 +130,12 @@ function showDashboard(account) {
       return;
     }
 
-    // Check if already signed in (cached session)
     const accounts = instance.getAllAccounts();
     if (accounts.length > 0) {
       instance.setActiveAccount(accounts[0]);
       showDashboard(accounts[0]);
       return;
     }
-
-    // Not signed in — stay on login page (default)
   } catch (e) {
     console.error('MSAL init error:', e);
     const note = document.querySelector('.login-note');
