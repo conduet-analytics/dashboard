@@ -1,7 +1,7 @@
 /**
  * auth.js
  * -------
- * MSAL authentication for GitHub Pages SPA.
+ * MSAL v2 authentication for GitHub Pages SPA.
  * Always authenticates via Azure AD — the user's token is used to call
  * Microsoft Graph directly from the browser to read SharePoint Excel data.
  */
@@ -12,10 +12,8 @@
 const AUTH_CONFIG = {
   clientId:  '7dfd41b7-1960-49c6-a701-b021a28550bb',
   tenantId:  '3acfc3b8-ea64-4ce1-8910-f91e9c67a3fc',
-  // Dynamically build redirect URI from current page URL (works on any host)
+  // Dynamically build redirect URI from current page URL
   get redirectUri() {
-    // For GitHub Pages: https://conduet-analytics.github.io/dashboard/
-    // For localhost:    http://localhost:8080/ (or wherever you serve)
     return window.location.origin + window.location.pathname;
   },
 };
@@ -30,7 +28,7 @@ const GRAPH_SCOPES = [
 let _msalInstance = null;
 let _currentAccount = null;
 
-// ── Initialize MSAL ─────────────────────────────────────────────────────────
+// ── Initialize MSAL (v2 API) ────────────────────────────────────────────────
 function getMsal() {
   if (_msalInstance) return _msalInstance;
   _msalInstance = new msal.PublicClientApplication({
@@ -60,13 +58,12 @@ window.getToken = async function () {
     });
     return response.accessToken;
   } catch (e) {
-    // Silent token failed — need interactive login
     console.warn('Silent token acquisition failed, redirecting:', e.message);
     await instance.acquireTokenRedirect({
       scopes: GRAPH_SCOPES,
       account: account,
     });
-    return null; // page will redirect
+    return null;
   }
 };
 
@@ -74,7 +71,6 @@ window.getToken = async function () {
 window.signIn = async function () {
   try {
     const instance = getMsal();
-    await instance.initialize();
     await instance.loginRedirect({ scopes: GRAPH_SCOPES });
   } catch (e) {
     console.error('Sign-in error:', e);
@@ -107,17 +103,15 @@ function showDashboard(account) {
   if (typeof onSignedIn === 'function') onSignedIn(account);
 }
 
-// ── Handle MSAL redirect on page load ────────────────────────────────────────
+// ── Handle MSAL redirect on page load (v2 API — no initialize() needed) ─────
 (async function initAuth() {
   try {
     const instance = getMsal();
-    await instance.initialize();
 
     // Handle the redirect response (if returning from login)
     const redirectResult = await instance.handleRedirectPromise();
 
     if (redirectResult && redirectResult.account) {
-      // Just came back from login redirect
       instance.setActiveAccount(redirectResult.account);
       showDashboard(redirectResult.account);
       return;
@@ -134,7 +128,6 @@ function showDashboard(account) {
     // Not signed in — stay on login page (default)
   } catch (e) {
     console.error('MSAL init error:', e);
-    // Show error on login page
     const note = document.querySelector('.login-note');
     if (note) note.textContent = 'Auth error: ' + e.message;
   }
