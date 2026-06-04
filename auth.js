@@ -1,28 +1,36 @@
 /**
  * auth.js
  * -------
- * MSAL authentication module.
- * Handles sign-in, sign-out, and token acquisition.
- * Uses redirect flow (same pattern as colleague's working dashboard).
- *
- * Token is passed to the backend API in the Authorization header.
- * The backend uses it to call Microsoft Graph on behalf of the user.
+ * MSAL authentication for GitHub Pages SPA.
+ * Always authenticates via Azure AD — the user's token is used to call
+ * Microsoft Graph directly from the browser to read SharePoint Excel data.
  */
 
 'use strict';
 
+// ── Azure AD app registration ────────────────────────────────────────────────
 const AUTH_CONFIG = {
-  clientId:    '7dfd41b7-1960-49c6-a701-b021a28550bb', // WFM Reporting Data app
-  tenantId:    '3acfc3b8-ea64-4ce1-8910-f91e9c67a3fc',
-  redirectUri: window.location.origin + window.location.pathname,
+  clientId:  '7dfd41b7-1960-49c6-a701-b021a28550bb',
+  tenantId:  '3acfc3b8-ea64-4ce1-8910-f91e9c67a3fc',
+  // Dynamically build redirect URI from current page URL (works on any host)
+  get redirectUri() {
+    // For GitHub Pages: https://conduet-analytics.github.io/dashboard/
+    // For localhost:    http://localhost:8080/ (or wherever you serve)
+    return window.location.origin + window.location.pathname;
+  },
 };
 
-const SCOPES = ['User.Read', 'Files.ReadWrite.All', 'Sites.ReadWrite.All'];
+// Scopes needed to read SharePoint Excel files via Graph API
+const GRAPH_SCOPES = [
+  'User.Read',
+  'Files.Read.All',
+  'Sites.Read.All',
+];
 
 let _msalInstance = null;
-let _cachedToken  = null;
+let _currentAccount = null;
 
-// ── MSAL instance (lazy, same pattern as colleague) ───────────────────────────
+// ── Initialize MSAL ─────────────────────────────────────────────────────────
 function getMsal() {
   if (_msalInstance) return _msalInstance;
   _msalInstance = new msal.PublicClientApplication({
@@ -31,89 +39,103 @@ function getMsal() {
       authority:   `https://login.microsoftonline.com/${AUTH_CONFIG.tenantId}`,
       redirectUri: AUTH_CONFIG.redirectUri,
     },
-    cache: { cacheLocation: 'sessionStorage' },
+    cache: {
+      cacheLocation: 'sessionStorage',
+      storeAuthStateInCookie: false,
+    },
   });
   return _msalInstance;
 }
 
-// ── Public: Sign in (redirect) ────────────────────────────────────────────────
-async function signIn() {
-  try {
-    const i = getMsal();
-    await i.initialize();
-    await i.loginRedirect({ scopes: SCOPES });
-  } catch (e) {
-    alert('Sign-in failed: ' + e.message);
-  }
-}
-
-// ── Public: Sign out ──────────────────────────────────────────────────────────
-function signOut() {
-  getMsal().logoutRedirect({ postLogoutRedirectUri: AUTH_CONFIG.redirectUri });
-}
-
-// ── Public: Get access token (silent, falls back to cache) ────────────────────
-async function getToken() {
-  const i = getMsal();
-  const account = i.getActiveAccount() || i.getAllAccounts()[0];
+// ── Get access token (silent first, then redirect) ──────────────────────────
+window.getToken = async function () {
+  const instance = getMsal();
+  const account = _currentAccount || instance.getActiveAccount() || instance.getAllAccounts()[0];
   if (!account) throw new Error('Not signed in');
 
   try {
-    const result = await i.acquireTokenSilent({ scopes: SCOPES, account });
-    _cachedToken = result.accessToken;
-    return _cachedToken;
+    const response = await instance.acquireTokenSilent({
+      scopes: GRAPH_SCOPES,
+      account: account,
+    });
+    return response.accessToken;
   } catch (e) {
-    if (_cachedToken) return _cachedToken; // use cache if silent fails
-    await i.acquireTokenRedirect({ scopes: SCOPES, account });
-    return null;
+    // Silent token failed — need interactive login
+    console.warn('Silent token acquisition failed, redirecting:', e.message);
+    await instance.acquireTokenRedirect({
+      scopes: GRAPH_SCOPES,
+      account: account,
+    });
+    return null; // page will redirect
   }
-}
+};
 
-// ── Public: Get current user info ─────────────────────────────────────────────
-function getCurrentUser() {
-  const i = getMsal();
-  return i.getActiveAccount() || i.getAllAccounts()[0] || null;
-}
-
-// ── Bootstrap: handle redirect on page load ───────────────────────────────────
-(async function initAuth() {
+// ── Sign In (redirect flow) ─────────────────────────────────────────────────
+window.signIn = async function () {
   try {
-    const i = getMsal();
-    await i.initialize();
-
-    // Handle redirect response (coming back from Microsoft login)
-    const result = await i.handleRedirectPromise();
-    if (result?.account) {
-      i.setActiveAccount(result.account);
-      onAuthSuccess(result.account);
-      return;
-    }
-
-    // Check existing session
-    const accounts = i.getAllAccounts();
-    if (accounts.length > 0) {
-      i.setActiveAccount(accounts[0]);
-      onAuthSuccess(accounts[0]);
-    }
-    // else: stay on login page
+    const instance = getMsal();
+    await instance.initialize();
+    await instance.loginRedirect({ scopes: GRAPH_SCOPES });
   } catch (e) {
-    console.error('Auth init error:', e);
+    console.error('Sign-in error:', e);
+    alert('Sign-in failed: ' + e.message);
   }
-})();
+};
 
-// ── Called after successful auth ──────────────────────────────────────────────
-function onAuthSuccess(account) {
-  // Update UI
-  document.getElementById('hdr-user').textContent = account.name || account.username;
+// ── Sign Out ────────────────────────────────────────────────────────────────
+window.signOut = function () {
+  const instance = getMsal();
+  instance.logoutRedirect({
+    postLogoutRedirectUri: AUTH_CONFIG.redirectUri,
+  });
+};
 
-  // Show app, hide login
+// ── Show the dashboard after successful auth ────────────────────────────────
+function showDashboard(account) {
+  _currentAccount = account;
+  document.getElementById('hdr-user').textContent = account.name || account.username || 'User';
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  document.getElementById('page-app').classList.add('active');
+  document.getElementById('page-loading').classList.add('active');
 
-  // Bootstrap the dashboard (defined in app.js)
+  const badge = document.getElementById('api-badge');
+  if (badge) {
+    badge.textContent = '🟢 Live SharePoint';
+    badge.style.background = 'rgba(255,255,255,.18)';
+  }
+
+  // Notify app.js that auth is done
   if (typeof onSignedIn === 'function') onSignedIn(account);
 }
 
-// Expose to HTML onclick handlers
-window.signIn  = signIn;
-window.signOut = signOut;
+// ── Handle MSAL redirect on page load ────────────────────────────────────────
+(async function initAuth() {
+  try {
+    const instance = getMsal();
+    await instance.initialize();
+
+    // Handle the redirect response (if returning from login)
+    const redirectResult = await instance.handleRedirectPromise();
+
+    if (redirectResult && redirectResult.account) {
+      // Just came back from login redirect
+      instance.setActiveAccount(redirectResult.account);
+      showDashboard(redirectResult.account);
+      return;
+    }
+
+    // Check if already signed in (cached session)
+    const accounts = instance.getAllAccounts();
+    if (accounts.length > 0) {
+      instance.setActiveAccount(accounts[0]);
+      showDashboard(accounts[0]);
+      return;
+    }
+
+    // Not signed in — stay on login page (default)
+  } catch (e) {
+    console.error('MSAL init error:', e);
+    // Show error on login page
+    const note = document.querySelector('.login-note');
+    if (note) note.textContent = 'Auth error: ' + e.message;
+  }
+})();

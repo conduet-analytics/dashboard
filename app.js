@@ -1,77 +1,29 @@
 /**
  * app.js
  * ------
- * Frontend logic. Calls API endpoints, renders results.
- * NO calculations here — only display logic.
+ * Frontend logic for GitHub Pages SPA deployment.
  *
- * API_BASE switches automatically:
- *   - When backend is running locally → calls http://localhost:3000/api
- *   - When deployed on Azure → set BACKEND_URL in config
- *   - When hosted on GitHub Pages (no backend) → calls /static-api (pre-built JSON)
+ * Data flow:
+ *   1. auth.js authenticates user via MSAL → gets Graph API token
+ *   2. sharepoint.js fetches raw Excel rows from SharePoint via Graph API
+ *   3. calculator.js computes KPIs from the raw rows
+ *   4. This file renders everything (cards, charts, tables)
  *
- * Auth: token from auth.js is passed in every API request header.
- * Backend uses it to call Microsoft Graph on behalf of the user.
+ * No backend needed — all computation happens in the browser.
  */
 
 'use strict';
 
-// ── API configuration ─────────────────────────────────────────────────────────
-// Change BACKEND_URL to your Azure App Service URL when deployed
-const BACKEND_URL = null; // e.g. 'https://kpi-api.azurewebsites.net'
+const MONTH_ORDER_APP = [
+  'January','February','March','April','May','June',
+  'July','August','September','October','November','December'
+];
 
-const API_BASE = BACKEND_URL
-  ? `${BACKEND_URL}/api`
-  : (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-    ? 'http://localhost:3000/api'
-    : null; // GitHub Pages — use static JSON fallback
-
-const USE_STATIC = !API_BASE;
-
-// ── Utility: build API URL ────────────────────────────────────────────────────
-function apiUrl(endpoint, params = {}) {
-  if (!USE_STATIC) {
-    const qs = new URLSearchParams(params).toString();
-    return `${API_BASE}/${endpoint}${qs ? '?' + qs : ''}`;
-  }
-  // Static JSON fallback mapping (GitHub Pages, no backend)
-  const staticMap = {
-    'periods':         'periods.json',
-    'kpis':            'kpis.json',
-    'trends':          'trends.json',
-    'team-summary':    params.view === 'monthly'
-                         ? 'team-summary-monthly.json'
-                         : 'team-summary-weekly.json',
-  };
-  // Use relative path for GitHub Pages — /static-api/filename.json
-  const repoBase = window.location.pathname.replace(/\/[^/]*$/, ''); // e.g. /dashboard
-  return `${repoBase}/static-api/${staticMap[endpoint] || endpoint + '.json'}`;
-}
-
-// ── Fetch wrapper — includes auth token for live backend ─────────────────────
-async function apiFetch(endpoint, params = {}) {
-  const url = apiUrl(endpoint, params);
-  const headers = { 'Content-Type': 'application/json' };
-
-  // Attach user's token when calling live backend
-  if (!USE_STATIC && typeof getToken === 'function') {
-    try {
-      const token = await getToken();
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-    } catch (e) {
-      console.warn('Could not get token for API call:', e.message);
-    }
-  }
-
-  const res = await fetch(url, { headers });
-  if (!res.ok) throw new Error(`API error ${res.status} for ${url}`);
-  return res.json();
-}
-
-// ── Formatters ────────────────────────────────────────────────────────────────
+// ── Formatters ───────────────────────────────────────────────────────────────
 const fmt = {
-  dec:  v => v == null ? '—' : Number(v).toFixed(2),
-  pct:  v => v == null ? '—' : Number(v).toFixed(2) + '%',
-  num:  v => v == null ? '—' : Number(v).toLocaleString(),
+  dec: v => v == null ? '—' : Number(v).toFixed(2),
+  pct: v => v == null ? '—' : Number(v).toFixed(2) + '%',
+  num: v => v == null ? '—' : Number(v).toLocaleString(),
 };
 
 function trend(curr, prev, higherBetter) {
@@ -83,7 +35,7 @@ function trend(curr, prev, higherBetter) {
   return good ? '<span class="up">▲</span>' : '<span class="dn">▼</span>';
 }
 
-// ── KPI metric definitions (display only, no formulas) ───────────────────────
+// ── KPI metric definitions (display only) ────────────────────────────────────
 const METRICS = [
   { key: 'csat',           label: 'CSAT',                  fmt: fmt.dec, higher: true  },
   { key: 'messaging_csat', label: 'Messaging CSAT',         fmt: fmt.dec, higher: true  },
@@ -103,7 +55,6 @@ const METRICS = [
 // RENDER: Snapshot Cards
 // ─────────────────────────────────────────────────────────────────────────────
 function renderSnapCards(currentKpis, prevKpis) {
-  // Accepts either { conduet, hrd } directly or wraps it
   const current  = currentKpis?.conduet ? currentKpis : { conduet: currentKpis, hrd: null };
   const previous = prevKpis?.conduet    ? prevKpis    : { conduet: prevKpis,    hrd: null };
   const c = current?.conduet?.total;
@@ -242,7 +193,6 @@ function renderTable(tableId, periods) {
   const labels = periods.map(p => p.label);
   let h = `<thead><tr><th>KPIs</th>${labels.map(l => `<th>${l}</th>`).join('')}</tr></thead><tbody>`;
 
-  // HC section
   h += `<tr class="r-sec"><td>TOTAL ACTIVE HC</td>${periods.map(p => {
     const ct = p.kpis?.conduet?.total?.hc || 0;
     const ht = p.kpis?.hrd?.total?.hc || 0;
@@ -253,7 +203,6 @@ function renderTable(tableId, periods) {
   h += `<tr class="r-n"><td>New Hires</td>${periods.map(p => `<td>${p.kpis?.conduet?.new_hires?.hc ?? '—'}</td>`).join('')}</tr>`;
   h += `<tr class="r-h"><td>HRD</td>${periods.map(p => `<td>${p.kpis?.hrd?.total?.hc ?? '—'}</td>`).join('')}</tr>`;
 
-  // KPI rows
   for (const m of METRICS) {
     h += `<tr class="r-sec"><td>${m.label}</td>`;
     periods.forEach((p, i) => {
@@ -263,9 +212,7 @@ function renderTable(tableId, periods) {
     });
     h += `</tr>`;
 
-    // Conduet
     h += `<tr class="r-c"><td>Conduet</td>${periods.map(p => `<td>${m.fmt(p.kpis?.conduet?.total?.[m.key])}</td>`).join('')}</tr>`;
-    // Tenured
     h += `<tr class="r-t"><td>Tenured</td>`;
     periods.forEach((p, i) => {
       const v = p.kpis?.conduet?.tenured?.[m.key];
@@ -273,7 +220,6 @@ function renderTable(tableId, periods) {
       h += `<td>${m.higher !== null ? trend(v, prev, m.higher) : ''}${m.fmt(v)}</td>`;
     });
     h += `</tr>`;
-    // New Hires
     h += `<tr class="r-n"><td>New Hires</td>`;
     periods.forEach((p, i) => {
       const v = p.kpis?.conduet?.new_hires?.[m.key];
@@ -281,7 +227,6 @@ function renderTable(tableId, periods) {
       h += `<td>${m.higher !== null ? trend(v, prev, m.higher) : ''}${m.fmt(v)}</td>`;
     });
     h += `</tr>`;
-    // HRD
     h += `<tr class="r-h"><td>HRD</td>`;
     periods.forEach((p, i) => {
       const v = p.kpis?.hrd?.total?.[m.key];
@@ -296,41 +241,116 @@ function renderTable(tableId, periods) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// DATA: Fetch from SharePoint + compute KPIs
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Helper: week-end date label */
+function weekLabel(we) {
+  const d = new Date(we);
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
+}
+
+/** Build weekly summary: last 4 weeks of the selected month */
+function buildWeeklySummary(rows, month) {
+  const monthRows = rows.filter(r => r.cal_month === month);
+  const weeks = [...new Set(monthRows.map(r => r.week_end))].sort().slice(-4);
+
+  return weeks.map(we => ({
+    label: weekLabel(we),
+    key:   we,
+    kpis:  computeGroupedKPIs(monthRows.filter(r => r.week_end === we)),
+  }));
+}
+
+/** Build monthly summary: one entry per month from Jan → selected */
+function buildMonthlySummary(rows) {
+  const byMonth = {};
+  for (const r of rows) {
+    if (!r.cal_month) continue;
+    if (!byMonth[r.cal_month]) byMonth[r.cal_month] = [];
+    byMonth[r.cal_month].push(r);
+  }
+
+  return MONTH_ORDER_APP
+    .filter(m => byMonth[m] && byMonth[m].length)
+    .map(m => {
+      const year = byMonth[m][0]?.year;
+      return {
+        label: `${m.slice(0, 3)} '${String(year).slice(-2)}`,
+        key:   `${year}-${m}`,
+        kpis:  computeGroupedKPIs(byMonth[m]),
+      };
+    });
+}
+
+/** Build trend data: monthly grouped KPIs */
+function buildTrends(rows) {
+  const byMonth = {};
+  for (const r of rows) {
+    if (!r.cal_month) continue;
+    if (!byMonth[r.cal_month]) byMonth[r.cal_month] = [];
+    byMonth[r.cal_month].push(r);
+  }
+
+  return MONTH_ORDER_APP
+    .filter(m => byMonth[m] && byMonth[m].length)
+    .map(m => {
+      const year = byMonth[m][0]?.year;
+      return {
+        label: `${m.slice(0, 3)} '${String(year).slice(-2)}`,
+        year,
+        month: m,
+        kpis:  computeGroupedKPIs(byMonth[m]),
+      };
+    });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // MAIN: load all dashboard data
 // ─────────────────────────────────────────────────────────────────────────────
 let selectedYear, selectedMonth;
 
 async function loadDashboard() {
   try {
-    showStatus('Loading KPI data...');
+    showStatus('Fetching data from SharePoint...');
 
     const year  = selectedYear  || new Date().getFullYear();
     const month = selectedMonth || null;
 
-    // Fire API calls in parallel
-    const [trendsData, weeklySummary, monthlySummary] = await Promise.all([
-      apiFetch('trends',       { year, ...(month ? { month } : {}) }),
-      apiFetch('team-summary', { year, ...(month ? { month } : {}), view: 'weekly' }),
-      apiFetch('team-summary', { year, ...(month ? { month } : {}), view: 'monthly' }),
-    ]);
+    // Fetch all rows from Jan → selected month from SharePoint
+    const rows = await fetchRows({
+      year,
+      month: month || MONTH_ORDER_APP[new Date().getMonth()],
+    });
 
-    // Derive snapshot from latest weekly period (avoids needing separate /api/kpis)
-    const latestPeriod  = weeklySummary.periods?.[weeklySummary.periods.length - 1];
-    const prevPeriod    = weeklySummary.periods?.[weeklySummary.periods.length - 2];
+    showStatus('Computing KPIs...');
 
-    // Render
+    // Build all views from the raw data
+    const currentMonth = month || MONTH_ORDER_APP[new Date().getMonth()];
+    const weeklySummary  = buildWeeklySummary(rows, currentMonth);
+    const monthlySummary = buildMonthlySummary(rows);
+    const trends         = buildTrends(rows);
+
+    // Derive snapshot from latest weekly period
+    const latestPeriod = weeklySummary[weeklySummary.length - 1];
+    const prevPeriod   = weeklySummary[weeklySummary.length - 2];
+
+    // Switch from loading page to dashboard
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    document.getElementById('page-app').classList.add('active');
+
+    // Render everything
     renderSnapCards(latestPeriod?.kpis, prevPeriod?.kpis);
-    renderCharts(trendsData.trends);
-    renderTable('tbl-weekly',  weeklySummary.periods);
-    renderTable('tbl-monthly', monthlySummary.periods);
+    renderCharts(trends);
+    renderTable('tbl-weekly',  weeklySummary);
+    renderTable('tbl-monthly', monthlySummary);
 
-    // Update period selector from available data
     document.getElementById('last-refresh-time').textContent = new Date().toLocaleString();
     hideStatus();
 
   } catch (e) {
     showError(e.message);
-    console.error(e);
+    console.error('Dashboard load error:', e);
   }
 }
 
@@ -339,18 +359,18 @@ async function loadDashboard() {
 // ─────────────────────────────────────────────────────────────────────────────
 async function initPeriodSelector() {
   try {
-    const { periods } = await apiFetch('periods');
+    showStatus('Loading available periods...');
+    const periods = await fetchAvailablePeriods();
     const yearSel  = document.getElementById('sel-year');
     const monthSel = document.getElementById('sel-month');
 
-    // Get unique years
     const years = [...new Set(periods.map(p => p.year))].sort((a, b) => b - a);
     yearSel.innerHTML = years.map(y => `<option value="${y}">${y}</option>`).join('');
 
     const populateMonths = (year) => {
       const months = periods.filter(p => p.year === parseInt(year)).map(p => p.month);
       monthSel.innerHTML = months.map(m => `<option value="${m}">${m}</option>`).join('');
-      monthSel.value = months[months.length - 1]; // default to latest month
+      monthSel.value = months[months.length - 1];
       selectedMonth = monthSel.value;
     };
 
@@ -372,6 +392,7 @@ async function initPeriodSelector() {
 
   } catch (e) {
     console.error('Period selector failed:', e);
+    showError('Failed to load periods: ' + e.message);
   }
 }
 
@@ -379,15 +400,18 @@ async function initPeriodSelector() {
 // Status helpers
 // ─────────────────────────────────────────────────────────────────────────────
 function showStatus(msg) {
-  document.getElementById('status-bar').textContent = msg;
-  document.getElementById('status-bar').style.display = 'block';
+  const bar = document.getElementById('status-bar');
+  bar.textContent = msg;
+  bar.style.background = '#e8f4fd';
+  bar.style.color = '#1565c0';
+  bar.style.display = 'block';
 }
 function hideStatus() {
   document.getElementById('status-bar').style.display = 'none';
 }
 function showError(msg) {
   const bar = document.getElementById('status-bar');
-  bar.textContent = '❌ ' + msg;
+  bar.textContent = 'Error: ' + msg;
   bar.style.background = '#fdecea';
   bar.style.color = '#c0392b';
   bar.style.display = 'block';
@@ -404,38 +428,14 @@ window.showTab = function (id, btn) {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Bootstrap
-// Called by auth.js after successful sign-in (or if already signed in)
+// Bootstrap — called by auth.js after successful sign-in
 // ─────────────────────────────────────────────────────────────────────────────
 async function onSignedIn(account) {
-  // Show API mode badge
   const badge = document.getElementById('api-badge');
   if (badge) {
-    badge.textContent = USE_STATIC ? '📁 Static Data' : '🟢 Live API';
-    badge.title = USE_STATIC
-      ? 'Using pre-built JSON (deploy backend for live data)'
-      : 'Connected to live backend → SharePoint';
+    badge.textContent = '🟢 Live SharePoint';
+    badge.title = 'Connected to SharePoint via Microsoft Graph';
   }
   await initPeriodSelector();
   await loadDashboard();
-}
-
-// Static mode: show login screen, then load static data after sign-in click
-// The login is cosmetic in static mode (no real backend auth needed)
-// but provides consistent UX and prepares for live backend later
-if (USE_STATIC) {
-  // Override signIn for static mode — just show the dashboard
-  window.signIn = async function () {
-    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-    document.getElementById('page-app').classList.add('active');
-    const badge = document.getElementById('api-badge');
-    if (badge) { badge.textContent = '📁 Static Data'; badge.title = 'Using pre-built data — no backend yet'; }
-    await initPeriodSelector();
-    await loadDashboard();
-  };
-
-  document.addEventListener('DOMContentLoaded', async () => {
-    // Stay on login screen — wait for user to click Sign In
-    // (login screen is already the default active page in index.html)
-  });
 }
