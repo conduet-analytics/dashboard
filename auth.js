@@ -8,6 +8,24 @@
 
 'use strict';
 
+// ── Guard: check MSAL loaded ─────────────────────────────────────────────────
+if (typeof msal === 'undefined') {
+  console.error('MSAL library failed to load from CDN.');
+  document.addEventListener('DOMContentLoaded', () => {
+    const note = document.querySelector('.login-note');
+    if (note) {
+      note.style.color = '#c0392b';
+      note.innerHTML = 'MSAL library failed to load. Check browser console (F12 → Network tab) for blocked scripts.<br>You may need to self-host <code>msal-browser.min.js</code> in this repo.';
+    }
+  });
+  window.signIn = function () {
+    alert('MSAL library did not load. Open DevTools (F12) → Network tab → reload the page and look for a failed request to alcdn.msauth.net');
+  };
+  window.signOut = function () {};
+  window.getToken = function () { return null; };
+  // Stop here — don't try to create MSAL instance
+} else {
+
 // ── Azure AD app registration ────────────────────────────────────────────────
 const AUTH_CONFIG = {
   clientId:  '7dfd41b7-1960-49c6-a701-b021a28550bb',
@@ -132,3 +150,5 @@ function showDashboard(account) {
     if (note) note.textContent = 'Auth error: ' + e.message;
   }
 })();
+
+} // end of else (MSAL loaded successfully)

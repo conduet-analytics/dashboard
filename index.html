@@ -5,7 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>HRD CS · KPI Performance Dashboard</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.js"></script>
+<!-- MSAL v2.35.0 — primary CDN (US West), fallback (Europe North) -->
 <script type="text/javascript" src="https://alcdn.msauth.net/browser/2.35.0/js/msal-browser.min.js" integrity="sha384-PARf28kmic36Ve+O3DnUerRXFtOQ7ZDqRDGpLcbljly5/N39T2OV3kt3QsWOKeAX" crossorigin="anonymous"></script>
+<script type="text/javascript">
+  if (typeof msal === 'undefined') {
+    document.write('<scr' + 'ipt src="https://alcdn.msftauth.net/browser/2.35.0/js/msal-browser.min.js"></scr' + 'ipt>');
+  }
+</script>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
