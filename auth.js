@@ -39,8 +39,8 @@ const AUTH_CONFIG = {
 // Scopes needed to read SharePoint Excel files via Graph API
 const GRAPH_SCOPES = [
   'User.Read',
-  'Files.Read.All',
-  'Sites.Read.All',
+  'Files.ReadWrite.All',
+  'Sites.ReadWrite.All',
 ];
 
 let _msalInstance = null;
