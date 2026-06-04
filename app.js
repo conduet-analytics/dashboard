@@ -42,7 +42,9 @@ function apiUrl(endpoint, params = {}) {
                          ? 'team-summary-monthly.json'
                          : 'team-summary-weekly.json',
   };
-  return `${API_BASE}/${staticMap[endpoint] || endpoint + '.json'}`;
+  // Use relative path for GitHub Pages — /static-api/filename.json
+  const repoBase = window.location.pathname.replace(/\/[^/]*$/, ''); // e.g. /dashboard
+  return `${repoBase}/static-api/${staticMap[endpoint] || endpoint + '.json'}`;
 }
 
 // ── Fetch wrapper — includes auth token for live backend ─────────────────────
@@ -100,7 +102,10 @@ const METRICS = [
 // ─────────────────────────────────────────────────────────────────────────────
 // RENDER: Snapshot Cards
 // ─────────────────────────────────────────────────────────────────────────────
-function renderSnapCards(current, previous) {
+function renderSnapCards(currentKpis, prevKpis) {
+  // Accepts either { conduet, hrd } directly or wraps it
+  const current  = currentKpis?.conduet ? currentKpis : { conduet: currentKpis, hrd: null };
+  const previous = prevKpis?.conduet    ? prevKpis    : { conduet: prevKpis,    hrd: null };
   const c = current?.conduet?.total;
   const p = previous?.conduet?.total;
   const h = current?.hrd?.total;
@@ -302,16 +307,19 @@ async function loadDashboard() {
     const year  = selectedYear  || new Date().getFullYear();
     const month = selectedMonth || null;
 
-    // Fire all 3 API calls in parallel
-    const [kpisData, trendsData, weeklySummary, monthlySummary] = await Promise.all([
-      apiFetch('kpis',         { year, ...(month ? { month } : {}) }),
+    // Fire API calls in parallel
+    const [trendsData, weeklySummary, monthlySummary] = await Promise.all([
       apiFetch('trends',       { year, ...(month ? { month } : {}) }),
       apiFetch('team-summary', { year, ...(month ? { month } : {}), view: 'weekly' }),
       apiFetch('team-summary', { year, ...(month ? { month } : {}), view: 'monthly' }),
     ]);
 
+    // Derive snapshot from latest weekly period (avoids needing separate /api/kpis)
+    const latestPeriod  = weeklySummary.periods?.[weeklySummary.periods.length - 1];
+    const prevPeriod    = weeklySummary.periods?.[weeklySummary.periods.length - 2];
+
     // Render
-    renderSnapCards(kpisData.current, kpisData.previous);
+    renderSnapCards(latestPeriod?.kpis, prevPeriod?.kpis);
     renderCharts(trendsData.trends);
     renderTable('tbl-weekly',  weeklySummary.periods);
     renderTable('tbl-monthly', monthlySummary.periods);
@@ -412,15 +420,22 @@ async function onSignedIn(account) {
   await loadDashboard();
 }
 
-// Fallback: if no auth (static mode on GitHub Pages without backend)
+// Static mode: show login screen, then load static data after sign-in click
+// The login is cosmetic in static mode (no real backend auth needed)
+// but provides consistent UX and prepares for live backend later
 if (USE_STATIC) {
-  document.addEventListener('DOMContentLoaded', async () => {
-    // Skip login screen — go straight to app with static data
+  // Override signIn for static mode — just show the dashboard
+  window.signIn = async function () {
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
     document.getElementById('page-app').classList.add('active');
     const badge = document.getElementById('api-badge');
-    if (badge) { badge.textContent = '📁 Static Data'; }
+    if (badge) { badge.textContent = '📁 Static Data'; badge.title = 'Using pre-built data — no backend yet'; }
     await initPeriodSelector();
     await loadDashboard();
+  };
+
+  document.addEventListener('DOMContentLoaded', async () => {
+    // Stay on login screen — wait for user to click Sign In
+    // (login screen is already the default active page in index.html)
   });
 }
