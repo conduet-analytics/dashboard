@@ -39,7 +39,6 @@ const AUTH_CONFIG = {
 const GRAPH_SCOPES = [
   'User.Read',
   'Files.ReadWrite',
-  'Sites.Selected',
 ];
 
 let _msalInstance = null;
