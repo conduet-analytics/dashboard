@@ -38,7 +38,8 @@ const AUTH_CONFIG = {
 // Scopes matching what IT approved
 const GRAPH_SCOPES = [
   'User.Read',
-  'Files.ReadWrite',
+  'Files.ReadWrite.All',
+  'Sites.ReadWrite.All',
 ];
 
 let _msalInstance = null;
