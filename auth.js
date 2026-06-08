@@ -35,12 +35,12 @@ const AUTH_CONFIG = {
   },
 };
 
-// Scopes matching what IT approved
-const GRAPH_SCOPES = [
-  'User.Read',
-  'Files.ReadWrite',
-  'Sites.Selected',
-];
+// Login only needs User.Read — keeps the consent prompt simple
+const LOGIN_SCOPES = ['User.Read'];
+
+// Graph API calls use .default to pick up all pre-approved permissions
+// (Files.ReadWrite, Sites.Selected, User.Read — as configured in Azure)
+const GRAPH_SCOPES = ['https://graph.microsoft.com/.default'];
 
 let _msalInstance = null;
 let _currentAccount = null;
@@ -88,7 +88,7 @@ window.getToken = async function () {
 window.signIn = async function () {
   try {
     const instance = getMsal();
-    await instance.loginRedirect({ scopes: GRAPH_SCOPES });
+    await instance.loginRedirect({ scopes: LOGIN_SCOPES });
   } catch (e) {
     console.error('Sign-in error:', e);
     alert('Sign-in failed: ' + e.message);
