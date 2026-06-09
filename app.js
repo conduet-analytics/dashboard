@@ -365,12 +365,16 @@ function buildTrends(rows) {
 // ─────────────────────────────────────────────────────────────────────────────
 let selectedYear, selectedMonth;
 
+let _forceNext = false;
+
 async function loadDashboard() {
   try {
-    showStatus('Fetching data from SharePoint...');
+    showStatus(_forceNext ? 'Refreshing from SharePoint...' : 'Loading...');
 
     const year  = selectedYear  || new Date().getFullYear();
     const month = selectedMonth || null;
+
+    if (_forceNext) { await forceRefreshData(); _forceNext = false; }
 
     const rows = await fetchRows({
       year,

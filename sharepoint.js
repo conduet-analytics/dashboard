@@ -4,8 +4,8 @@
  * Browser-side data layer — reads the SharePoint Excel file directly
  * via Microsoft Graph API using the user's MSAL token.
  *
- * To switch to a different data source later (Azure SQL, Dataverse, etc.),
- * replace the loadFromSharePoint() function — the rest of the app doesn't change.
+ * OPTIMIZED: fetches ALL rows once, caches in memory.
+ * Period switching and refreshes use the cache (no re-fetch).
  */
 
 'use strict';
@@ -56,6 +56,9 @@ const FIELD_MAP = {
   'OOA':                               'ooa',
 };
 
+// ── In-memory cache ─────────────────────────────────────────────────────────
+let _cache = null; // { allRows: [], periods: [], fetchedAt: Date }
+
 // ── Graph API fetch helper ───────────────────────────────────────────────────
 async function graphFetch(path, token, sessionId) {
   const headers = { Authorization: `Bearer ${token}` };
@@ -90,13 +93,13 @@ function mapRow(colIdx, rawRow) {
   return obj;
 }
 
-// ── Load raw rows from SharePoint Excel via Graph API ────────────────────────
-async function loadFromSharePoint(filters, token) {
+// ── Load ALL rows from SharePoint Excel (single fetch, cached) ──────────────
+async function loadAllRows(token) {
   const { graphBase, driveId, itemId, sheetName, batchSize, concurrency } = SP_CONFIG;
   const wbBase = `/drives/${driveId}/items/${itemId}/workbook`;
   const wsPath = `${wbBase}/worksheets('${encodeURIComponent(sheetName)}')`;
 
-  // Create a non-persistent session for better performance
+  // Create a non-persistent session
   const sessionRes = await fetch(`${graphBase}${wbBase}/createSession`, {
     method: 'POST',
     headers: {
@@ -124,18 +127,6 @@ async function loadFromSharePoint(filters, token) {
     const colIdx = {};
     headers.forEach((h, i) => { if (h) colIdx[h] = i; });
 
-    const calMonthIdx = colIdx['Cal Month'];
-    const yearIdx = colIdx['Year'];
-
-    // Build month filter set: Jan → selected month
-    const monthsSet = new Set();
-    if (filters.year && filters.month) {
-      const upTo = MONTH_ORDER.indexOf(filters.month);
-      MONTH_ORDER.slice(0, upTo + 1).forEach(m => monthsSet.add(`${filters.year}-${m}`));
-    } else if (filters.year) {
-      MONTH_ORDER.forEach(m => monthsSet.add(`${filters.year}-${m}`));
-    }
-
     // Build batch ranges
     const batchDefs = [];
     for (let start = 2; start <= totalRows; start += batchSize) {
@@ -143,7 +134,7 @@ async function loadFromSharePoint(filters, token) {
       batchDefs.push({ start, end });
     }
 
-    // Fetch in parallel batches
+    // Fetch ALL rows in parallel batches
     const allRows = [];
     for (let i = 0; i < batchDefs.length; i += concurrency) {
       const chunk = batchDefs.slice(i, i + concurrency);
@@ -157,12 +148,8 @@ async function loadFromSharePoint(filters, token) {
       );
       for (const batchRes of results) {
         for (const rawRow of batchRes.values) {
-          const rowMonth = rawRow[calMonthIdx];
-          const rowYear = rawRow[yearIdx];
-          if (!monthsSet.size || monthsSet.has(`${rowYear}-${rowMonth}`)) {
-            const mapped = mapRow(colIdx, rawRow);
-            if (filters.location && mapped.location !== filters.location) continue;
-            if (filters.empStatus && mapped.emp_status !== filters.empStatus) continue;
+          const mapped = mapRow(colIdx, rawRow);
+          if (mapped.year && mapped.cal_month) {
             allRows.push(mapped);
           }
         }
@@ -183,81 +170,72 @@ async function loadFromSharePoint(filters, token) {
   }
 }
 
-// ── Public API (used by app.js) ──────────────────────────────────────────────
+// ── Ensure cache is populated ────────────────────────────────────────────────
+async function ensureCache(forceRefresh) {
+  if (_cache && !forceRefresh) return _cache;
 
-/**
- * Fetch rows from SharePoint for the given filters.
- */
-async function fetchRows(filters) {
-  const token = await getToken();
-  if (!token) throw new Error('No access token — please sign in');
-  return loadFromSharePoint(filters, token);
-}
-
-/**
- * Get available periods (year/month) from the data.
- */
-async function fetchAvailablePeriods() {
   const token = await getToken();
   if (!token) throw new Error('No access token — please sign in');
 
-  const { graphBase, driveId, itemId, sheetName } = SP_CONFIG;
-  const wsPath = `/drives/${driveId}/items/${itemId}/workbook/worksheets('${encodeURIComponent(sheetName)}')`;
+  const allRows = await loadAllRows(token);
 
-  const hdrRes = await graphFetch(`${wsPath}/range(address='A1:AZ1')?$select=values`, token);
-  const headers = hdrRes.values[0];
-  const yearCol = headers.indexOf('Year');
-  const monthCol = headers.indexOf('Cal Month');
-
-  if (yearCol === -1 || monthCol === -1) {
-    throw new Error('Could not find Year or Cal Month columns in the spreadsheet');
-  }
-
-  const colLetter = (idx) => {
-    let s = '';
-    while (idx >= 0) {
-      s = String.fromCharCode(65 + (idx % 26)) + s;
-      idx = Math.floor(idx / 26) - 1;
-    }
-    return s;
-  };
-
-  const minCol = Math.min(yearCol, monthCol);
-  const maxCol = Math.max(yearCol, monthCol);
-  const minLetter = colLetter(minCol);
-  const maxLetter = colLetter(maxCol);
-
-  const dimRes = await graphFetch(`${wsPath}/usedRange(valuesOnly=true)?$select=rowCount`, token);
-  const totalRows = dimRes.rowCount;
-
+  // Derive periods from data
   const seen = new Set();
   const periods = [];
-  const batchSize = 10000;
-
-  for (let start = 2; start <= totalRows; start += batchSize) {
-    const end = Math.min(start + batchSize - 1, totalRows);
-    const rangeRes = await graphFetch(
-      `${wsPath}/range(address='${minLetter}${start}:${maxLetter}${end}')?$select=values`,
-      token
-    );
-    for (const row of rangeRes.values) {
-      const yIdx = yearCol - minCol;
-      const mIdx = monthCol - minCol;
-      const y = row[yIdx];
-      const m = row[mIdx];
-      if (y && m) {
-        const key = `${y}-${m}`;
-        if (!seen.has(key)) {
-          seen.add(key);
-          periods.push({ year: Number(y), month: String(m) });
-        }
-      }
+  for (const r of allRows) {
+    const key = `${r.year}-${r.cal_month}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      periods.push({ year: Number(r.year), month: String(r.cal_month) });
     }
   }
-
-  return periods.sort((a, b) =>
+  periods.sort((a, b) =>
     a.year !== b.year
       ? a.year - b.year
       : MONTH_ORDER.indexOf(a.month) - MONTH_ORDER.indexOf(b.month)
   );
+
+  _cache = { allRows, periods, fetchedAt: new Date() };
+  return _cache;
+}
+
+// ── Public API (used by app.js) ──────────────────────────────────────────────
+
+/**
+ * Fetch rows for the given filters. Uses cache — no re-fetch unless forceRefresh.
+ */
+async function fetchRows(filters, forceRefresh) {
+  const cache = await ensureCache(forceRefresh);
+  let rows = cache.allRows;
+
+  // Filter by year + months (Jan → selected month)
+  if (filters.year && filters.month) {
+    const upTo = MONTH_ORDER.indexOf(filters.month);
+    const monthsSet = new Set(MONTH_ORDER.slice(0, upTo + 1));
+    rows = rows.filter(r =>
+      Number(r.year) === Number(filters.year) && monthsSet.has(r.cal_month)
+    );
+  } else if (filters.year) {
+    rows = rows.filter(r => Number(r.year) === Number(filters.year));
+  }
+
+  if (filters.location) rows = rows.filter(r => r.location === filters.location);
+  if (filters.empStatus) rows = rows.filter(r => r.emp_status === filters.empStatus);
+
+  return rows;
+}
+
+/**
+ * Get available periods. Uses cache — no separate API call.
+ */
+async function fetchAvailablePeriods() {
+  const cache = await ensureCache(false);
+  return cache.periods;
+}
+
+/**
+ * Force a fresh fetch from SharePoint (called by Refresh button).
+ */
+async function forceRefreshData() {
+  _cache = null;
 }
