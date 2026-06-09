@@ -1,13 +1,8 @@
 /**
  * app.js
  * ------
- * Frontend logic for SharePoint-hosted SPA.
- *
- * Data flow:
- *   1. auth.js authenticates user via MSAL → gets Graph API token
- *   2. sharepoint.js fetches raw Excel rows from SharePoint via Graph API
- *   3. calculator.js computes KPIs from the raw rows
- *   4. This file renders everything (cards, charts, tables)
+ * Frontend logic — renders cards, charts, and exec-level KPI tables
+ * with inline SVG sparkline trends.
  */
 
 'use strict';
@@ -33,7 +28,42 @@ function trend(curr, prev, higherBetter) {
   return good ? '<span class="up">▲</span>' : '<span class="dn">▼</span>';
 }
 
-// ── KPI metric definitions (display only) ────────────────────────────────────
+// ── SVG Sparkline generator ─────────────────────────────────────────────────
+function sparkline(values, higherBetter) {
+  const nums = values.filter(v => v != null && !isNaN(v));
+  if (nums.length < 2) return '';
+
+  const w = 70, h = 24, pad = 2;
+  const min = Math.min(...nums);
+  const max = Math.max(...nums);
+  const range = max - min || 1;
+
+  const points = nums.map((v, i) => {
+    const x = pad + (i / (nums.length - 1)) * (w - pad * 2);
+    const y = pad + (1 - (v - min) / range) * (h - pad * 2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+
+  // Color based on trend direction
+  const first = nums[0], last = nums[nums.length - 1];
+  const trending = last > first ? 'up' : last < first ? 'down' : 'flat';
+  let color;
+  if (higherBetter === null) color = '#5b2c8d';
+  else if (higherBetter) color = trending === 'up' ? '#1b7f3a' : trending === 'down' ? '#c0392b' : '#b45309';
+  else color = trending === 'down' ? '#1b7f3a' : trending === 'up' ? '#c0392b' : '#b45309';
+
+  // Dot on last point
+  const lastPt = points[points.length - 1].split(',');
+
+  return `<div class="sparkline-cell">
+    <svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
+      <polyline points="${points.join(' ')}" fill="none" stroke="${color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="${lastPt[0]}" cy="${lastPt[1]}" r="2.5" fill="${color}"/>
+    </svg>
+  </div>`;
+}
+
+// ── KPI metric definitions ───────────────────────────────────────────────────
 const METRICS = [
   { key: 'csat',           label: 'CSAT',                  fmt: fmt.dec, higher: true  },
   { key: 'messaging_csat', label: 'Messaging CSAT',         fmt: fmt.dec, higher: true  },
@@ -48,6 +78,16 @@ const METRICS = [
   { key: 'adherence',      label: 'Adherence %',            fmt: fmt.pct, higher: true  },
   { key: 'total_contacts', label: 'Total Contacts Handled', fmt: fmt.num, higher: null  },
 ];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SECTION SWITCHING
+// ─────────────────────────────────────────────────────────────────────────────
+window.showSection = function (id, btn) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.sec-tab').forEach(b => b.classList.remove('active'));
+  document.getElementById('sec-' + id).classList.add('active');
+  btn.classList.add('active');
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RENDER: Snapshot Cards
@@ -114,10 +154,10 @@ function renderCharts(trends) {
 
   const opts = {
     responsive: true, maintainAspectRatio: false,
-    plugins: { legend: { position: 'bottom', labels: { font: { size: 9.5 }, boxWidth: 9, padding: 7 } } },
+    plugins: { legend: { position: 'bottom', labels: { font: { size: 10 }, boxWidth: 10, padding: 8 } } },
     scales: {
-      x: { ticks: { font: { size: 9.5 } }, grid: { display: false } },
-      y: { ticks: { font: { size: 9.5 } }, grid: { color: '#f0f0f0' } }
+      x: { ticks: { font: { size: 10 } }, grid: { display: false } },
+      y: { ticks: { font: { size: 10 } }, grid: { color: '#f0f0f0' } }
     }
   };
 
@@ -179,59 +219,80 @@ function renderCharts(trends) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// RENDER: KPI Table
+// RENDER: KPI Table (exec style with sparklines + metric spacing)
 // ─────────────────────────────────────────────────────────────────────────────
 function renderTable(tableId, periods) {
   if (!periods || !periods.length) {
     document.getElementById(tableId).innerHTML =
-      '<tr><td colspan="10" style="padding:20px;text-align:center;color:#888">No data for selected period.</td></tr>';
+      '<tr><td colspan="10" style="padding:24px;text-align:center;color:#888">No data for selected period.</td></tr>';
     return;
   }
 
   const labels = periods.map(p => p.label);
-  let h = `<thead><tr><th>KPIs</th>${labels.map(l => `<th>${l}</th>`).join('')}</tr></thead><tbody>`;
+  let h = `<thead><tr><th>KPIs</th>${labels.map(l => `<th>${l}</th>`).join('')}<th>Trend</th></tr></thead><tbody>`;
 
+  // HC section
   h += `<tr class="r-sec"><td>TOTAL ACTIVE HC</td>${periods.map(p => {
     const ct = p.kpis?.conduet?.total?.hc || 0;
     const ht = p.kpis?.hrd?.total?.hc || 0;
     return `<td>${ct + ht}</td>`;
-  }).join('')}</tr>`;
-  h += `<tr class="r-c"><td>Conduet</td>${periods.map(p => `<td>${p.kpis?.conduet?.total?.hc ?? '—'}</td>`).join('')}</tr>`;
-  h += `<tr class="r-t"><td>Tenured</td>${periods.map(p => `<td>${p.kpis?.conduet?.tenured?.hc ?? '—'}</td>`).join('')}</tr>`;
-  h += `<tr class="r-n"><td>New Hires</td>${periods.map(p => `<td>${p.kpis?.conduet?.new_hires?.hc ?? '—'}</td>`).join('')}</tr>`;
-  h += `<tr class="r-h"><td>HRD</td>${periods.map(p => `<td>${p.kpis?.hrd?.total?.hc ?? '—'}</td>`).join('')}</tr>`;
+  }).join('')}<td>${sparkline(periods.map(p => (p.kpis?.conduet?.total?.hc || 0) + (p.kpis?.hrd?.total?.hc || 0)), true)}</td></tr>`;
+  h += `<tr class="r-c"><td>Conduet</td>${periods.map(p => `<td>${p.kpis?.conduet?.total?.hc ?? '—'}</td>`).join('')}<td>${sparkline(periods.map(p => p.kpis?.conduet?.total?.hc), true)}</td></tr>`;
+  h += `<tr class="r-t"><td>Tenured</td>${periods.map(p => `<td>${p.kpis?.conduet?.tenured?.hc ?? '—'}</td>`).join('')}<td></td></tr>`;
+  h += `<tr class="r-n"><td>New Hires</td>${periods.map(p => `<td>${p.kpis?.conduet?.new_hires?.hc ?? '—'}</td>`).join('')}<td></td></tr>`;
+  h += `<tr class="r-h"><td>HRD</td>${periods.map(p => `<td>${p.kpis?.hrd?.total?.hc ?? '—'}</td>`).join('')}<td>${sparkline(periods.map(p => p.kpis?.hrd?.total?.hc), true)}</td></tr>`;
 
-  for (const m of METRICS) {
+  // Spacer
+  h += `<tr class="r-spacer"><td colspan="${labels.length + 2}"></td></tr>`;
+
+  for (let mi = 0; mi < METRICS.length; mi++) {
+    const m = METRICS[mi];
+
+    // Metric header row with sparkline for conduet total
+    const conduetVals = periods.map(p => p.kpis?.conduet?.total?.[m.key]);
     h += `<tr class="r-sec"><td>${m.label}</td>`;
     periods.forEach((p, i) => {
       const v    = p.kpis?.conduet?.total?.[m.key];
       const prev = i > 0 ? periods[i - 1].kpis?.conduet?.total?.[m.key] : null;
-      h += `<td>${m.higher !== null ? trend(v, prev, m.higher) : ''}${m.fmt(v)}</td>`;
+      h += `<td>${m.higher !== null ? trend(v, prev, m.higher) : ''} ${m.fmt(v)}</td>`;
     });
-    h += `</tr>`;
+    h += `<td>${sparkline(conduetVals, m.higher)}</td></tr>`;
 
-    h += `<tr class="r-c"><td>Conduet</td>${periods.map(p => `<td>${m.fmt(p.kpis?.conduet?.total?.[m.key])}</td>`).join('')}</tr>`;
+    // Conduet row
+    h += `<tr class="r-c"><td>Conduet</td>${periods.map(p => `<td>${m.fmt(p.kpis?.conduet?.total?.[m.key])}</td>`).join('')}<td></td></tr>`;
+
+    // Tenured row
     h += `<tr class="r-t"><td>Tenured</td>`;
     periods.forEach((p, i) => {
       const v = p.kpis?.conduet?.tenured?.[m.key];
       const prev = i > 0 ? periods[i - 1].kpis?.conduet?.tenured?.[m.key] : null;
-      h += `<td>${m.higher !== null ? trend(v, prev, m.higher) : ''}${m.fmt(v)}</td>`;
+      h += `<td>${m.higher !== null ? trend(v, prev, m.higher) : ''} ${m.fmt(v)}</td>`;
     });
-    h += `</tr>`;
+    h += `<td></td></tr>`;
+
+    // New Hires row
     h += `<tr class="r-n"><td>New Hires</td>`;
     periods.forEach((p, i) => {
       const v = p.kpis?.conduet?.new_hires?.[m.key];
       const prev = i > 0 ? periods[i - 1].kpis?.conduet?.new_hires?.[m.key] : null;
-      h += `<td>${m.higher !== null ? trend(v, prev, m.higher) : ''}${m.fmt(v)}</td>`;
+      h += `<td>${m.higher !== null ? trend(v, prev, m.higher) : ''} ${m.fmt(v)}</td>`;
     });
-    h += `</tr>`;
+    h += `<td></td></tr>`;
+
+    // HRD row
+    const hrdVals = periods.map(p => p.kpis?.hrd?.total?.[m.key]);
     h += `<tr class="r-h"><td>HRD</td>`;
     periods.forEach((p, i) => {
       const v = p.kpis?.hrd?.total?.[m.key];
       const prev = i > 0 ? periods[i - 1].kpis?.hrd?.total?.[m.key] : null;
-      h += `<td>${m.higher !== null ? trend(v, prev, m.higher) : ''}${m.fmt(v)}</td>`;
+      h += `<td>${m.higher !== null ? trend(v, prev, m.higher) : ''} ${m.fmt(v)}</td>`;
     });
-    h += `</tr>`;
+    h += `<td>${sparkline(hrdVals, m.higher)}</td></tr>`;
+
+    // Spacer between metric groups
+    if (mi < METRICS.length - 1) {
+      h += `<tr class="r-spacer"><td colspan="${labels.length + 2}"></td></tr>`;
+    }
   }
 
   h += `</tbody>`;
@@ -247,16 +308,18 @@ function weekLabel(we) {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
 }
 
-function buildWeeklySummary(rows, month) {
-  const monthRows = rows.filter(r => r.cal_month === month);
-  const weeks = [...new Set(monthRows.map(r => r.week_end))].sort().slice(-4);
-  return weeks.map(we => ({
+// Always return last 6 weeks from the data (regardless of filter)
+function buildWeeklySummary(rows) {
+  const weeks = [...new Set(rows.map(r => r.week_end))].sort();
+  const last6 = weeks.slice(-6);
+  return last6.map(we => ({
     label: weekLabel(we),
     key:   we,
-    kpis:  computeGroupedKPIs(monthRows.filter(r => r.week_end === we)),
+    kpis:  computeGroupedKPIs(rows.filter(r => r.week_end === we)),
   }));
 }
 
+// Always return last 6 months from the data (regardless of filter)
 function buildMonthlySummary(rows) {
   const byMonth = {};
   for (const r of rows) {
@@ -264,16 +327,18 @@ function buildMonthlySummary(rows) {
     if (!byMonth[r.cal_month]) byMonth[r.cal_month] = [];
     byMonth[r.cal_month].push(r);
   }
-  return MONTH_ORDER_APP
+  const allMonths = MONTH_ORDER_APP
     .filter(m => byMonth[m] && byMonth[m].length)
     .map(m => {
       const year = byMonth[m][0]?.year;
       return {
         label: `${m.slice(0, 3)} '${String(year).slice(-2)}`,
         key:   `${year}-${m}`,
+        month: m,
         kpis:  computeGroupedKPIs(byMonth[m]),
       };
     });
+  return allMonths.slice(-6);
 }
 
 function buildTrends(rows) {
@@ -314,8 +379,7 @@ async function loadDashboard() {
 
     showStatus('Computing KPIs...');
 
-    const currentMonth = month || MONTH_ORDER_APP[new Date().getMonth()];
-    const weeklySummary  = buildWeeklySummary(rows, currentMonth);
+    const weeklySummary  = buildWeeklySummary(rows);
     const monthlySummary = buildMonthlySummary(rows);
     const trends         = buildTrends(rows);
 
@@ -373,8 +437,6 @@ async function initPeriodSelector() {
       loadDashboard();
     });
 
-    document.getElementById('btn-load')?.addEventListener('click', loadDashboard);
-
   } catch (e) {
     console.error('Period selector failed:', e);
     showError('Failed to load periods: ' + e.message);
@@ -403,7 +465,7 @@ function showError(msg) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Tab switching
+// Tab switching (weekly/monthly within KPI Tables)
 // ─────────────────────────────────────────────────────────────────────────────
 window.showTab = function (id, btn) {
   document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
