@@ -27,7 +27,7 @@ if (typeof msal === 'undefined') {
 
 // ── Azure AD app registration ────────────────────────────────────────────────
 const AUTH_CONFIG = {
-  clientId:  'fb723393-bd9d-4052-9f18-e9b65a6174c4',
+  clientId:  '7dfd41b7-1960-49c6-a701-b021a28550bb',
   tenantId:  '3acfc3b8-ea64-4ce1-8910-f91e9c67a3fc',
   get redirectUri() {
     // Works automatically on any host (SharePoint, localhost, etc.)
@@ -35,12 +35,12 @@ const AUTH_CONFIG = {
   },
 };
 
-// Login only needs User.Read — keeps the consent prompt simple
-const LOGIN_SCOPES = ['User.Read'];
-
-// Graph API calls use .default to pick up all pre-approved permissions
-// (Files.ReadWrite, Sites.Selected, User.Read — as configured in Azure)
-const GRAPH_SCOPES = ['https://graph.microsoft.com/.default'];
+// Scopes needed to read SharePoint Excel files via Graph API
+const GRAPH_SCOPES = [
+  'User.Read',
+  'Files.ReadWrite.All',
+  'Sites.ReadWrite.All',
+];
 
 let _msalInstance = null;
 let _currentAccount = null;
@@ -88,7 +88,7 @@ window.getToken = async function () {
 window.signIn = async function () {
   try {
     const instance = getMsal();
-    await instance.loginRedirect({ scopes: LOGIN_SCOPES });
+    await instance.loginRedirect({ scopes: GRAPH_SCOPES });
   } catch (e) {
     console.error('Sign-in error:', e);
     alert('Sign-in failed: ' + e.message);
